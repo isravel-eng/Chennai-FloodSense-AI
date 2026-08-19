@@ -204,7 +204,3 @@ so the suite passes even without internet access. Set
   daily rainfall — a documented approximation, not a perfect substitute.
 - **Model 1 (SARIMA) is monthly**, kept as a separate research/trend
   component; it is not wired into the live flood-risk path.
-
-<<<<<<<
-=======
->>>>>>>
