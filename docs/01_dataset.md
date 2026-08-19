@@ -2,7 +2,7 @@
 
 ## Overview
 
-Chennai FloodSense AI currently uses historical rainfall and flood-related data covering **1993–2023** across **30 Chennai localities**. The repository also contains a live weather layer for current 2026 prediction inputs. fileciteturn3file0
+Chennai FloodSense AI currently uses historical rainfall and flood-related data covering **1993–2023** across **30 Chennai localities**. The repository also contains a live weather layer for current 2026 prediction inputs.
 
 ## Dataset Components
 
@@ -10,19 +10,19 @@ Chennai FloodSense AI currently uses historical rainfall and flood-related data 
 
 `data/raw/master_dataset.csv`
 
-This is the main historical source dataset used to build the Model 2 processed features.
+Main historical source dataset used to build the Model 2 processed features.
 
 ### Model 2 processed features
 
 `data/processed/model2_features.csv`
 
-This contains engineered daily features used by the flood-risk model, including rainfall windows, lag features, cyclical month features, locality information, and season indicators. The live pipeline reproduces the same 15-feature order expected by the saved XGBoost model. fileciteturn3file0
+Engineered daily features used by the flood-risk model, including rainfall windows, lag features, cyclical month features, locality information, and season indicators. The live pipeline reproduces the same 15-feature order expected by the saved XGBoost model.
 
 ### Model 1 monthly series
 
 `data/processed/monthly_rainfall_citywide.csv`
 
-This is the city-wide monthly rainfall series used by the SARIMA rainfall-forecasting component.
+City-wide monthly rainfall series used by the SARIMA rainfall-forecasting component.
 
 ### Locality lookup
 
@@ -34,7 +34,7 @@ Provides locality-level latitude, longitude, and approximate elevation used by t
 
 `data/processed/live_rainfall_log.csv`
 
-This file is created at runtime by the live rainfall-history component. Until sufficient real observations are collected, the pipeline can fall back to 1993–2023 seasonal climatology. fileciteturn3file0
+Created at runtime by the live rainfall-history component. Until sufficient real observations are available, the pipeline can fall back to 1993–2023 seasonal climatology.
 
 ## Current Data Timeline
 
@@ -44,10 +44,10 @@ This file is created at runtime by the live rainfall-history component. Until su
 | 2024–2025 | Planned extension for model re-evaluation and retraining |
 | 2026 | Current-year live weather inputs and validation period; not yet a complete training year |
 
-## Important Data Limitation
+## Important Limitation
 
-The current live rainfall-history mechanism may use seasonal climatology until enough real locality-level observations are accumulated. This is an acknowledged limitation of Version 1 and should be addressed before treating the system as a fully reliable operational flood-monitoring solution. fileciteturn3file0
+The live rainfall-history mechanism can use seasonal climatology until enough real locality-level observations are accumulated. This is a Version 1 limitation and should be addressed before treating the system as a fully operational flood-monitoring solution.
 
 ## Planned Data Update
 
-The next data-engineering stage is to obtain verified 2024–2025 rainfall observations, evaluate their impact on Model 1, and improve the live rainfall-history layer. 2026 observations should initially be treated as a current/live validation period rather than as a completed annual training set.
+Obtain verified 2024–2025 rainfall observations, evaluate their impact on Model 1, and improve the live rainfall-history layer. Treat 2026 observations initially as a current/live validation period rather than as a completed annual training year.
