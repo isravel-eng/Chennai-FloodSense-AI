@@ -1,21 +1,21 @@
 """
 02_evaluation.py
 -----------------
-Trains candidate Model 2 classifiers and selects the winner by PR-AUC
-(precision-recall AUC), which is the appropriate metric here because
-flood_occurred_documented is a rare-event / heavily imbalanced target
-(176 positive rows out of 16,554 - ~1.1%). ROC-AUC would look
-misleadingly good on a class this imbalanced; PR-AUC does not.
+Train and evaluate Model 2 with a chronological split:
 
-Candidates compared:
-  - RandomForestClassifier (class_weight="balanced")
-  - XGBClassifier (scale_pos_weight tuned for the imbalance)
+  TRAIN       1993-2017
+  VALIDATION  2018-2021
+  TEST        2022-2023
 
-Winner is saved to models/flood_model.pkl (pickled model object).
-Run standalone: python model_2_flood/02_evaluation.py
+The validation period selects both the model configuration and the decision
+threshold. The final test period remains untouched until the final report.
 
-Prerequisite: model_2_flood/preprocessing.py must have already been run
-(this script imports FEATURE_ORDER from it).
+Candidates:
+  - Random Forest baseline
+  - XGBoost baseline
+  - XGBoost tuned configuration
+
+Selection metric: validation PR-AUC, appropriate for the rare flood class.
 """
 
 import pickle
@@ -26,7 +26,6 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import average_precision_score, precision_recall_curve
-from sklearn.model_selection import train_test_split
 from xgboost import XGBClassifier
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -38,96 +37,171 @@ MODELS_DIR = ROOT / "models"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 RANDOM_STATE = 42
+TRAIN_END = "2017-12-31"
+VALIDATION_END = "2021-12-31"
 
 
-def load_split():
-    df = pd.read_csv(FEATURES_PATH)
-    df = df.sort_values("date")
-    X = df[FEATURE_ORDER]
-    y = df[TARGET_COL]
-    # Stratified split so the rare positive class is represented in both
-    # train and test sets.
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=RANDOM_STATE, stratify=y
+def load_temporal_split():
+    df = pd.read_csv(FEATURES_PATH, parse_dates=["date"])
+    df = df.sort_values("date").reset_index(drop=True)
+    train = df[df["date"] <= pd.Timestamp(TRAIN_END)]
+    validation = df[(df["date"] > pd.Timestamp(TRAIN_END)) & (df["date"] <= pd.Timestamp(VALIDATION_END))]
+    test = df[df["date"] > pd.Timestamp(VALIDATION_END)]
+
+    for name, part in (("train", train), ("validation", validation), ("test", test)):
+        if part.empty or part[TARGET_COL].sum() == 0:
+            raise ValueError(f"Temporal {name} partition is empty or has no positive flood events.")
+    return train, validation, test
+
+
+def xy(df):
+    return df[FEATURE_ORDER], df[TARGET_COL]
+
+
+def best_f1_threshold(y_true, proba):
+    precision, recall, thresholds = precision_recall_curve(y_true, proba)
+    f1 = np.divide(
+        2 * precision * recall,
+        precision + recall,
+        out=np.zeros_like(precision),
+        where=(precision + recall) != 0,
     )
-    return X_train, X_test, y_train, y_test
+    idx = int(np.argmax(f1))
+    threshold = float(thresholds[idx]) if idx < len(thresholds) else 0.5
+    return threshold, float(f1[idx])
 
 
-def evaluate(model, X_test, y_test, label):
-    proba = model.predict_proba(X_test)[:, 1]
-    pr_auc = average_precision_score(y_test, proba)
-    precision, recall, thresholds = precision_recall_curve(y_test, proba)
-    # Best F1 threshold on this holdout, for reference only.
-    f1_scores = np.divide(
-        2 * precision * recall, precision + recall,
-        out=np.zeros_like(precision), where=(precision + recall) != 0,
-    )
-    best_idx = int(np.argmax(f1_scores))
-    best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
-    print(f"{label}: PR-AUC = {pr_auc:.4f}  (best-F1 threshold ~= {best_threshold:.3f})")
-    return pr_auc
+def evaluate(model, X, y):
+    proba = model.predict_proba(X)[:, 1]
+    pr_auc = average_precision_score(y, proba)
+    threshold, f1 = best_f1_threshold(y, proba)
+    return float(pr_auc), float(threshold), float(f1)
+
+
+def make_models(scale_pos_weight: float):
+    return {
+        "RandomForest": RandomForestClassifier(
+            n_estimators=400,
+            max_depth=8,
+            class_weight="balanced",
+            random_state=RANDOM_STATE,
+            n_jobs=-1,
+        ),
+        "XGBoost_baseline": XGBClassifier(
+            n_estimators=400,
+            max_depth=5,
+            learning_rate=0.05,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            scale_pos_weight=scale_pos_weight,
+            eval_metric="aucpr",
+            random_state=RANDOM_STATE,
+            n_jobs=-1,
+        ),
+        "XGBoost_tuned": XGBClassifier(
+            n_estimators=600,
+            max_depth=4,
+            learning_rate=0.03,
+            min_child_weight=3,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            reg_lambda=2.0,
+            scale_pos_weight=scale_pos_weight,
+            eval_metric="aucpr",
+            random_state=RANDOM_STATE,
+            n_jobs=-1,
+        ),
+    }
+
+
+def build_final_model(name: str, scale_pos_weight: float):
+    return make_models(scale_pos_weight)[name]
 
 
 def main():
-    X_train, X_test, y_train, y_test = load_split()
-    n_pos = int(y_train.sum())
-    n_neg = int(len(y_train) - n_pos)
-    print(f"Train rows: {len(X_train)}  (positives: {n_pos}, negatives: {n_neg})")
-    print(f"Test rows : {len(X_test)}  (positives: {int(y_test.sum())})")
+    train, validation, test = load_temporal_split()
+    X_train, y_train = xy(train)
+    X_val, y_val = xy(validation)
+    X_test, y_test = xy(test)
 
-    rf = RandomForestClassifier(
-        n_estimators=400,
-        max_depth=8,
-        class_weight="balanced",
-        random_state=RANDOM_STATE,
-        n_jobs=-1,
-    )
-    rf.fit(X_train, y_train)
-    rf_pr_auc = evaluate(rf, X_test, y_test, "RandomForest")
+    print("TIME-ORDERED SPLIT")
+    print(f"Train      : {train.date.min().date()} -> {train.date.max().date()} ({len(train)} rows, positives: {int(y_train.sum())})")
+    print(f"Validation : {validation.date.min().date()} -> {validation.date.max().date()} ({len(validation)} rows, positives: {int(y_val.sum())})")
+    print(f"Test       : {test.date.min().date()} -> {test.date.max().date()} ({len(test)} rows, positives: {int(y_test.sum())})")
 
-    scale_pos_weight = n_neg / max(n_pos, 1)
-    xgb = XGBClassifier(
-        n_estimators=400,
-        max_depth=5,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        scale_pos_weight=scale_pos_weight,
-        eval_metric="aucpr",
-        random_state=RANDOM_STATE,
-        n_jobs=-1,
-    )
-    xgb.fit(X_train, y_train)
-    xgb_pr_auc = evaluate(xgb, X_test, y_test, "XGBoost")
+    scale_pos_weight = (len(y_train) - int(y_train.sum())) / max(int(y_train.sum()), 1)
+    candidates = {}
+    for name, model in make_models(scale_pos_weight).items():
+        model.fit(X_train, y_train)
+        pr_auc, threshold, f1 = evaluate(model, X_val, y_val)
+        candidates[name] = {
+            "model": model,
+            "validation_pr_auc": pr_auc,
+            "validation_threshold": threshold,
+            "validation_f1": f1,
+        }
+        print(f"{name:18s} validation PR-AUC={pr_auc:.4f} threshold={threshold:.3f} F1={f1:.3f}")
 
-    if xgb_pr_auc >= rf_pr_auc:
-        winner, winner_name, winner_pr_auc = xgb, "XGBoost", xgb_pr_auc
-    else:
-        winner, winner_name, winner_pr_auc = rf, "RandomForest", rf_pr_auc
+    winner_name = max(candidates, key=lambda n: candidates[n]["validation_pr_auc"])
+    winner = candidates[winner_name]
+    selected_threshold = winner["validation_threshold"]
+    print(f"\nSelected by validation PR-AUC: {winner_name} ({winner['validation_pr_auc']:.4f})")
 
-    print(f"\nSelected model: {winner_name} (PR-AUC = {winner_pr_auc:.4f})")
+    trainval = pd.concat([train, validation], ignore_index=True)
+    X_trainval, y_trainval = xy(trainval)
+    final_scale = (len(y_trainval) - int(y_trainval.sum())) / max(int(y_trainval.sum()), 1)
+    final_model = build_final_model(winner_name, final_scale)
+    final_model.fit(X_trainval, y_trainval)
 
-    model_path = MODELS_DIR / "flood_model.pkl"
-    with open(model_path, "wb") as f:
-        pickle.dump(winner, f)
-    print(f"Saved {model_path}")
+    test_proba = final_model.predict_proba(X_test)[:, 1]
+    test_pr_auc = average_precision_score(y_test, test_proba)
+    test_pred = (test_proba >= selected_threshold).astype(int)
+    tp = int(((test_pred == 1) & (y_test.to_numpy() == 1)).sum())
+    predicted_positive = int((test_pred == 1).sum())
+    actual_positive = int((y_test == 1).sum())
+    precision = tp / max(predicted_positive, 1)
+    recall = tp / max(actual_positive, 1)
+    f1 = 2 * precision * recall / max(precision + recall, 1e-12)
 
-    # Persist selection metadata for evaluation.py / README reporting.
-    meta_path = MODELS_DIR / "flood_model_selection.pkl"
-    with open(meta_path, "wb") as f:
-        pickle.dump({
-            "selected_model": winner_name,
-            "pr_auc": round(float(winner_pr_auc), 4),
-            "candidates": {
-                "RandomForest": round(float(rf_pr_auc), 4),
-                "XGBoost": round(float(xgb_pr_auc), 4),
-            },
-            "n_train": len(X_train),
-            "n_test": len(X_test),
-            "n_positive_train": n_pos,
-            "n_positive_test": int(y_test.sum()),
-        }, f)
-    print(f"Saved {meta_path}")
+    print("\nFINAL UNTOUCHED TEST")
+    print(f"Test PR-AUC : {test_pr_auc:.4f}")
+    print(f"Precision   : {precision:.3f}")
+    print(f"Recall      : {recall:.3f}")
+    print(f"F1          : {f1:.3f}")
+    print(f"Threshold   : {selected_threshold:.3f} (validation only)")
+
+    with open(MODELS_DIR / "flood_model.pkl", "wb") as f:
+        pickle.dump(final_model, f)
+
+    metadata = {
+        "model_version": "2.0",
+        "selected_model": winner_name,
+        "selection_metric": "validation_pr_auc",
+        "validation_pr_auc": round(winner["validation_pr_auc"], 4),
+        "validation_f1": round(winner["validation_f1"], 4),
+        "decision_threshold": round(selected_threshold, 6),
+        "final_test_pr_auc": round(float(test_pr_auc), 4),
+        "final_test_precision": round(float(precision), 4),
+        "final_test_recall": round(float(recall), 4),
+        "final_test_f1": round(float(f1), 4),
+        "candidates_validation_pr_auc": {
+            name: round(info["validation_pr_auc"], 4) for name, info in candidates.items()
+        },
+        "split": {"train_end": TRAIN_END, "validation_end": VALIDATION_END, "test_start": "2022-01-01"},
+        "feature_count": len(FEATURE_ORDER),
+        "feature_order": FEATURE_ORDER,
+        "n_train": len(train),
+        "n_validation": len(validation),
+        "n_test": len(test),
+        "n_positive_train": int(y_train.sum()),
+        "n_positive_validation": int(y_val.sum()),
+        "n_positive_test": int(y_test.sum()),
+    }
+    with open(MODELS_DIR / "flood_model_selection.pkl", "wb") as f:
+        pickle.dump(metadata, f)
+
+    print("Saved models/flood_model.pkl")
+    print("Saved models/flood_model_selection.pkl")
 
 
 if __name__ == "__main__":
