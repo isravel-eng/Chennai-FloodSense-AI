@@ -1,26 +1,23 @@
 """
 feature_engineering.py
 -----------------------
-Builds the processed datasets used by Model 2 (XGBoost flood-risk classifier):
+Builds the processed datasets used by Model 2 (flood-risk classifier).
 
-  data/processed/locality_lookup.csv   -> one row per locality (lat/lon/elevation)
-  data/processed/model2_features.csv   -> master_dataset.csv + engineered features
+V2 feature additions are intentionally lightweight and use only information
+already present in master_dataset.csv. No future target information is used.
 
-Engineered features added on top of the raw master_dataset columns:
-  - month_sin, month_cos      : cyclical encoding of calendar month
-  - rainfall_lag_1/2/3/7      : rainfall (mm) N days *before* the current record,
-                                 computed per locality on the locality's own
-                                 observation sequence (the dataset is not daily
-                                 for every locality, so "lag" = previous
-                                 recorded reading for that locality, not
-                                 strictly previous calendar day)
+Added features:
+  - month_sin/month_cos and day_of_year_sin/day_of_year_cos: cyclical seasonality
+  - rainfall_lag_1/2/3/7: previous recorded rainfall for each locality
+  - rainfall_change_1d: change from the previous recorded rainfall
+  - rainfall_7d_per_day / rainfall_30d_per_day: normalized accumulation
+  - rainfall_7d_ratio_30d: recent rainfall concentration
 
-This script is idempotent - re-running it regenerates both CSVs from the raw
-master_dataset.csv.
+The script is idempotent and regenerates the processed CSVs from the raw data.
 """
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -32,7 +29,7 @@ LAGS = [1, 2, 3, 7]
 
 
 def build_locality_lookup(df: pd.DataFrame) -> pd.DataFrame:
-    """One row per locality with its coordinates + elevation (most recent value used)."""
+    """One row per locality with its latest known coordinates/elevation."""
     lookup = (
         df.sort_values("date")
         .groupby("locality", as_index=False)
@@ -47,43 +44,52 @@ def build_locality_lookup(df: pd.DataFrame) -> pd.DataFrame:
     return lookup
 
 
-def add_cyclical_month(df: pd.DataFrame) -> pd.DataFrame:
+def add_cyclical_features(df: pd.DataFrame) -> pd.DataFrame:
     df["month_sin"] = np.sin(2 * np.pi * df["month"] / 12)
     df["month_cos"] = np.cos(2 * np.pi * df["month"] / 12)
+    df["day_of_year_sin"] = np.sin(2 * np.pi * df["day_of_year"] / 365.25)
+    df["day_of_year_cos"] = np.cos(2 * np.pi * df["day_of_year"] / 365.25)
     return df
 
 
 def add_rainfall_lags(df: pd.DataFrame, lags=LAGS) -> pd.DataFrame:
-    """Per-locality lag of rainfall_mm over the locality's own record sequence."""
+    """Previous recorded rainfall for each locality, ordered by date."""
     df = df.sort_values(["locality", "date"]).reset_index(drop=True)
     for lag in lags:
         col = f"rainfall_lag_{lag}"
         df[col] = df.groupby("locality")["rainfall_mm"].shift(lag)
-    # Fill leading NaNs (start of each locality's series) using that locality's
-    # own rainfall_mm at time 0 (no rainfall history yet -> assume same as
-    # current reading, a conservative "no prior signal" fallback).
-    lag_cols = [f"rainfall_lag_{lag}" for lag in lags]
-    for col in lag_cols:
         df[col] = df[col].fillna(df["rainfall_mm"])
     return df
 
 
+def add_rainfall_dynamics(df: pd.DataFrame) -> pd.DataFrame:
+    """Add normalized accumulation and short-term rainfall-change features."""
+    df["rainfall_change_1d"] = df["rainfall_mm"] - df["rainfall_lag_1"]
+    df["rainfall_7d_per_day"] = df["rainfall_7d_mm"] / 7.0
+    df["rainfall_30d_per_day"] = df["rainfall_30d_mm"] / 30.0
+    df["rainfall_7d_ratio_30d"] = df["rainfall_7d_mm"] / (df["rainfall_30d_mm"] + 1e-6)
+    return df
+
+
 def build_model2_features(df: pd.DataFrame) -> pd.DataFrame:
-    df = add_cyclical_month(df.copy())
+    df = add_cyclical_features(df.copy())
     df = add_rainfall_lags(df)
+    df = add_rainfall_dynamics(df)
+
     ordered_cols = [
         "date", "locality", "latitude", "longitude", "elevation_m_approx",
         "rainfall_mm", "rainfall_3d_mm", "rainfall_7d_mm", "rainfall_30d_mm",
         "year", "month", "month_sin", "month_cos", "day_of_year",
-        "is_northeast_monsoon",
+        "day_of_year_sin", "day_of_year_cos", "is_northeast_monsoon",
         "rainfall_lag_1", "rainfall_lag_2", "rainfall_lag_3", "rainfall_lag_7",
-        "flood_occurred_documented",
+        "rainfall_change_1d", "rainfall_7d_per_day", "rainfall_30d_per_day",
+        "rainfall_7d_ratio_30d", "flood_occurred_documented",
     ]
     return df[ordered_cols]
 
 
 def build_monthly_rainfall_citywide(df: pd.DataFrame) -> pd.DataFrame:
-    """City-wide average monthly rainfall series, used to train Model 1 (SARIMA)."""
+    """City-wide average monthly rainfall series used by Model 1 (SARIMA)."""
     daily_citywide = (
         df.groupby("date", as_index=False)["rainfall_mm"].mean()
         .rename(columns={"rainfall_mm": "avg_rainfall_mm"})
@@ -101,7 +107,7 @@ def build_monthly_rainfall_citywide(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def main():
-    df = pd.read_csv(RAW_PATH)
+    df = pd.read_csv(RAW_PATH, parse_dates=["date"])
 
     lookup = build_locality_lookup(df)
     lookup_path = PROCESSED_DIR / "locality_lookup.csv"
