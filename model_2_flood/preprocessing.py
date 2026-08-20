@@ -1,26 +1,11 @@
 """
 preprocessing.py
------------------
-Builds and saves the preprocessing artifact for Model 2 (flood-risk
-XGBoost classifier): models/flood_preprocessing.pkl
+----------------
+Builds the serving metadata artifact for Model 2.
 
-This is a plain Python dict (not an sklearn Pipeline object) so that it
-unpickles portably regardless of sklearn version drift between training
-and inference machines - see the "pickle portability" fix noted in
-BUILD_LOG.md. It stores:
-
-  - feature_order : the exact ordered list of column names XGBoost expects.
-                     live/live_features.py and model_2_flood/predict_flood.py
-                     both import this to guarantee the live feature vector
-                     matches training order exactly.
-  - locality_stats : per-locality latitude/longitude/elevation, used by the
-                     live layer as a fallback lookup.
-  - scaling        : None - XGBoost is tree-based and does not require
-                     feature scaling; kept as an explicit field so future
-                     model swaps (e.g. logistic regression) have a documented
-                     place to add a fitted StandardScaler.
-
-Run standalone: python model_2_flood/preprocessing.py
+FEATURE_ORDER is the single source of truth for the trained model's input
+schema. Live inference imports this order so training and inference cannot
+silently drift apart.
 """
 
 import pickle
@@ -33,8 +18,6 @@ FEATURES_PATH = ROOT / "data" / "processed" / "model2_features.csv"
 MODELS_DIR = ROOT / "models"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Canonical feature order - Model 2 (XGBoost) is trained and served with
-# EXACTLY this column order. live/live_features.py must reproduce it.
 FEATURE_ORDER = [
     "rainfall_mm",
     "rainfall_3d_mm",
@@ -46,35 +29,44 @@ FEATURE_ORDER = [
     "month",
     "month_sin",
     "month_cos",
+    "day_of_year_sin",
+    "day_of_year_cos",
     "is_northeast_monsoon",
     "rainfall_lag_1",
     "rainfall_lag_2",
     "rainfall_lag_3",
     "rainfall_lag_7",
+    "rainfall_change_1d",
+    "rainfall_7d_per_day",
+    "rainfall_30d_per_day",
+    "rainfall_7d_ratio_30d",
 ]
 
 TARGET_COL = "flood_occurred_documented"
 
 
-def build_preprocessing(df: pd.DataFrame) -> dict:
-    locality_stats = (
-        df.groupby("locality")[["latitude", "longitude", "elevation_m_approx"]]
-        .last()
-        .to_dict(orient="index")
-    )
-    preprocessing = {
+def build_preprocessing(df: pd.DataFrame, locality_stats: dict | None = None) -> dict:
+    if locality_stats is None:
+        locality_stats = (
+            df.groupby("locality")[["latitude", "longitude", "elevation_m_approx"]]
+            .last()
+            .to_dict(orient="index")
+        )
+
+    return {
         "feature_order": FEATURE_ORDER,
         "target_col": TARGET_COL,
         "locality_stats": locality_stats,
-        "scaling": None,  # tree model - no scaling needed
-        "model_type": "xgboost.XGBClassifier",
+        "scaling": None,
+        "model_type": "tree_classifier",
+        "model_version": "2.0",
         "notes": (
-            "feature_order is authoritative. live/live_features.py builds a "
-            "dict keyed by these exact names, in this exact order, before "
-            "calling model.predict_proba()."
+            "V2 adds cyclical day-of-year features and rainfall dynamics. "
+            "No target-derived feature is used. Forecast rainfall is only "
+            "passed through the existing live forecast path as a documented "
+            "near-term proxy."
         ),
     }
-    return preprocessing
 
 
 def main():
