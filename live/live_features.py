@@ -1,30 +1,11 @@
 """
 live_features.py
 -----------------
-Converts (weather API data) + (recent rainfall history) + (locality info)
-into the EXACT feature dict Model 2 (XGBoost) expects, in the order
-recorded in models/flood_preprocessing.pkl.
+Builds the exact V2 Model 2 feature vector from live weather + recent rainfall.
 
-Feature order (do not change without retraining):
-  rainfall_mm, rainfall_3d_mm, rainfall_7d_mm, rainfall_30d_mm,
-  latitude, longitude, elevation_m_approx,
-  month, month_sin, month_cos, is_northeast_monsoon,
-  rainfall_lag_1, rainfall_lag_2, rainfall_lag_3, rainfall_lag_7
-
-Two builders are provided, matching the two predictions the live app
-shows (see live_prediction.py):
-
-  build_current_features()  -> "rainfall_mm" = today's actual/observed
-                                precipitation so far (current conditions)
-  build_forecast_24h_features() -> "rainfall_mm" = next-24h FORECAST
-                                precipitation from the weather API
-
-Model 2 was trained on ACTUAL daily rainfall only (never on forecast
-data, and never on temperature/humidity/wind - see README.md "Version 1
-vs Version 2"). Using forecast precipitation in the same "rainfall_mm"
-slot is a deliberate, documented approximation for the 24h-ahead
-prediction - it is the best available near-term proxy without retraining
-the model on forecast-vs-actual data, which is future work (Version 2).
+The live layer uses only features that are also present in the training data.
+Open-Meteo temperature/humidity/wind are intentionally not passed to the
+model because the historical training dataset does not contain those fields.
 """
 
 import math
@@ -38,42 +19,63 @@ def _month_cyclical(month: int) -> dict:
     }
 
 
-def _is_northeast_monsoon(month: int) -> int:
-    # Chennai's northeast monsoon: October-December (matches master_dataset.csv encoding)
-    return 1 if month in (10, 11, 12) else 0
-
-
-def _base_features(location: dict, history: dict, month: int) -> dict:
-    cyc = _month_cyclical(month)
+def _day_cyclical(day_of_year: int) -> dict:
     return {
-        "rainfall_3d_mm": history["rainfall_3d_mm"],
-        "rainfall_7d_mm": history["rainfall_7d_mm"],
-        "rainfall_30d_mm": history["rainfall_30d_mm"],
-        "latitude": location["latitude"],
-        "longitude": location["longitude"],
-        "elevation_m_approx": location["elevation_m_approx"],
-        "month": month,
-        "month_sin": cyc["month_sin"],
-        "month_cos": cyc["month_cos"],
-        "is_northeast_monsoon": _is_northeast_monsoon(month),
-        "rainfall_lag_1": history["rainfall_lag_1"],
-        "rainfall_lag_2": history["rainfall_lag_2"],
-        "rainfall_lag_3": history["rainfall_lag_3"],
-        "rainfall_lag_7": history["rainfall_lag_7"],
+        "day_of_year_sin": math.sin(2 * math.pi * day_of_year / 365.25),
+        "day_of_year_cos": math.cos(2 * math.pi * day_of_year / 365.25),
     }
 
 
-def build_current_features(weather: dict, history: dict, location: dict, month: int = None) -> dict:
-    """Prediction A - current risk, based on rainfall observed so far today."""
-    month = month or datetime.now().month
-    features = _base_features(location, history, month)
+def _is_northeast_monsoon(month: int) -> int:
+    return 1 if month in (10, 11, 12) else 0
+
+
+def _base_features(location: dict, history: dict, month: int, day_of_year: int) -> dict:
+    cyc = _month_cyclical(month)
+    day_cyc = _day_cyclical(day_of_year)
+    rainfall_mm = float(history.get("rainfall_mm", 0.0) or 0.0)
+    lag_1 = float(history.get("rainfall_lag_1", 0.0) or 0.0)
+    return {
+        "rainfall_3d_mm": float(history["rainfall_3d_mm"]),
+        "rainfall_7d_mm": float(history["rainfall_7d_mm"]),
+        "rainfall_30d_mm": float(history["rainfall_30d_mm"]),
+        "latitude": float(location["latitude"]),
+        "longitude": float(location["longitude"]),
+        "elevation_m_approx": float(location["elevation_m_approx"]),
+        "month": month,
+        "month_sin": cyc["month_sin"],
+        "month_cos": cyc["month_cos"],
+        "day_of_year_sin": day_cyc["day_of_year_sin"],
+        "day_of_year_cos": day_cyc["day_of_year_cos"],
+        "is_northeast_monsoon": _is_northeast_monsoon(month),
+        "rainfall_lag_1": lag_1,
+        "rainfall_lag_2": float(history["rainfall_lag_2"]),
+        "rainfall_lag_3": float(history["rainfall_lag_3"]),
+        "rainfall_lag_7": float(history["rainfall_lag_7"]),
+        "rainfall_change_1d": rainfall_mm - lag_1,
+        "rainfall_7d_per_day": float(history["rainfall_7d_mm"]) / 7.0,
+        "rainfall_30d_per_day": float(history["rainfall_30d_mm"]) / 30.0,
+        "rainfall_7d_ratio_30d": float(history["rainfall_7d_mm"]) / (float(history["rainfall_30d_mm"]) + 1e-6),
+    }
+
+
+def build_current_features(weather: dict, history: dict, location: dict, month: int = None, day_of_year: int = None) -> dict:
+    """Current-risk vector using observed precipitation."""
+    now = datetime.now()
+    month = month or now.month
+    day_of_year = day_of_year or now.timetuple().tm_yday
+    features = _base_features(location, history, month, day_of_year)
     features["rainfall_mm"] = float(weather.get("current_precipitation_mm", 0.0) or 0.0)
+    features["rainfall_change_1d"] = features["rainfall_mm"] - features["rainfall_lag_1"]
     return features
 
 
-def build_forecast_24h_features(weather: dict, history: dict, location: dict, month: int = None) -> dict:
-    """Prediction B - next-24h risk, based on next-24h forecast rainfall."""
-    month = month or datetime.now().month
-    features = _base_features(location, history, month)
+def build_forecast_24h_features(weather: dict, history: dict, location: dict, month: int = None, day_of_year: int = None) -> dict:
+    """Next-24h vector using Open-Meteo forecast precipitation as the rainfall input."""
+    now = datetime.now()
+    month = month or now.month
+    day_of_year = day_of_year or now.timetuple().tm_yday
+    features = _base_features(location, history, month, day_of_year)
     features["rainfall_mm"] = float(weather.get("forecast_next_24h_precipitation_mm", 0.0) or 0.0)
+    features["rainfall_change_1d"] = features["rainfall_mm"] - features["rainfall_lag_1"]
     return features
