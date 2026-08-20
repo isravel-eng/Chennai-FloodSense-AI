@@ -41,20 +41,16 @@ instead of only historical data.
 
 | | Model 1 — `model_1_rainfall/` | Model 2 — `model_2_flood/` |
 |---|---|---|
-| Algorithm | SARIMA (statsmodels) | XGBoost (selected over RandomForest by PR-AUC) |
+| Algorithm | SARIMA (statsmodels) | Selected tree classifier (XGBoost/RF candidates) |
 | Predicts | **Monthly** city-wide rainfall (mm) | Flood probability for a given locality/day |
 | Trained on | 1993–2023 monthly rainfall | 1993–2023 daily rainfall + locality/season features |
-| Role | Research / long-range trend forecasting | The model actually driving live risk predictions |
-| Holdout metric | MAE 4.73mm, RMSE 6.03mm (24-month holdout) | PR-AUC 0.727 (rare-event holdout, 1.1% positive rate) |
+| Role | Research / long-range trend forecasting | The model driving live risk predictions |
+| Evaluation | 24-month research holdout | Chronological validation + untouched 2022–2023 test |
 
-**Model 1's forecast is monthly** (e.g. "November 2026 will average ~21mm/day
-citywide"). A live flood-risk tool needs a near-term (hours/next-24h)
-number. Multiplying the SARIMA monthly output by some constant to fake a
-daily value was an earlier prototype shortcut and is **not** what this
-version does. Instead:
-
-- Model 1 stays a standalone research component (`predict_end_to_end.py --forecast-rainfall`).
-- Model 2's live rainfall input comes from a **real weather API** (Open-Meteo), not from Model 1.
+**Model 1's forecast is monthly**. A live flood-risk tool needs a near-term
+(hours/next-24h) number. Model 1 therefore remains a standalone research
+component, while Model 2 receives its near-term rainfall input from the real
+Open-Meteo weather API.
 
 ## Live architecture (`live/`)
 
@@ -72,10 +68,10 @@ Recent rainfall (3d / 7d / 30d + lags) ──► live log if available, else
                                             seasonal climatology fallback
        │
        ▼
-live_features.py ──► exact 15-feature vector, in training order
+live_features.py ──► exact V2 feature vector, in training order
        │
        ▼
-Existing XGBoost (flood_model.pkl)
+Model 2 (`flood_model.pkl`)
        │
        ▼
 Two predictions: CURRENT risk + NEXT-24H risk
@@ -84,18 +80,15 @@ Two predictions: CURRENT risk + NEXT-24H risk
 | File | Responsibility |
 |---|---|
 | `live/weather_api.py` | Calls Open-Meteo for current + hourly forecast precipitation/temp/humidity/wind for a locality's coordinates. |
-| `live/rainfall_history.py` | Answers "what rainfall has this locality actually received recently?" — via an append-only live log (`data/processed/live_rainfall_log.csv`), falling back to 1993–2023 seasonal climatology until 30+ days of real log data exist. |
-| `live/live_features.py` | Converts weather + history + location into the **exact** 15-feature vector `flood_model.pkl` expects, in the exact trained order. Two builders: `build_current_features()` and `build_forecast_24h_features()`. |
-| `live/live_prediction.py` | Orchestrates the above into `predict_live_flood(locality)`, returning both a current-risk and next-24h-risk prediction. |
+| `live/rainfall_history.py` | Provides recent locality rainfall from the append-only live log, with a historical seasonal fallback. |
+| `live/live_features.py` | Converts weather + history + location into the **exact V2 feature vector** expected by the model. |
+| `live/live_prediction.py` | Orchestrates the live current-risk and next-24h-risk predictions. |
 
-### Why the model isn't fed temperature/humidity/wind (yet)
+### Why temperature/humidity/wind are not model inputs
 
-`flood_model.pkl` was trained only on rainfall + location + season features.
-Feeding it temperature/humidity/wind now — even though Open-Meteo provides
-them — would be invalid (the model was never trained on those inputs).
-This is **Version 1** of the live layer. **Version 2** (future work) would
-retrain Model 2 on an expanded feature set including those live weather
-variables once enough live-labeled data exists to justify it.
+Open-Meteo provides these values, but the historical training dataset does not
+contain them. Passing them into the model without retraining would create a
+train/inference mismatch. They remain available from the API for future use.
 
 ## Repository layout
 
@@ -104,36 +97,58 @@ Chennai-FloodSense-AI/
 ├── data/
 │   ├── raw/master_dataset.csv              1993-2023 source data (30 localities)
 │   └── processed/
-│       ├── model2_features.csv             + lag/cyclical features for Model 2
+│       ├── model2_features.csv             V2 engineered features for Model 2
 │       ├── monthly_rainfall_citywide.csv   monthly series for Model 1
 │       ├── locality_lookup.csv             lat/lon/elevation per locality
-│       └── live_rainfall_log.csv           created at runtime by rainfall_history.py
+│       └── live_rainfall_log.csv           created at runtime
 ├── models/
 │   ├── rainfall_model.pkl                  fitted SARIMAXResults
-│   ├── rainfall_preprocessing.pkl          SARIMA order + metadata
-│   ├── flood_model.pkl                     fitted XGBClassifier
-│   └── flood_preprocessing.pkl             feature order + locality stats
+│   ├── rainfall_preprocessing.pkl          SARIMA metadata
+│   ├── flood_model.pkl                     fitted selected Model 2 classifier
+│   ├── flood_model_selection.pkl           V2 validation/test metrics + threshold
+│   └── flood_preprocessing.pkl             V2 feature order + locality stats
 ├── model_1_rainfall/
-│   ├── stationarity.py    ADF tests, informs SARIMA differencing
-│   ├── arima.py           non-seasonal baseline (comparison only)
-│   ├── holt_winters.py    exponential-smoothing baseline (comparison only)
-│   └── sarima.py          trains & saves the final Model 1
 ├── model_2_flood/
-│   ├── feature_engineering.py   builds processed/ CSVs from raw data
-│   ├── preprocessing.py         builds flood_preprocessing.pkl (feature order)
-│   ├── 02_evaluation.py         trains RandomForest + XGBoost, selects winner by PR-AUC, saves flood_model.pkl
-│   ├── evaluation.py            loads the saved model, prints a full evaluation report
-│   └── predict_flood.py         stable predict_flood(features_dict) interface used by everything else
-├── live/                        the new live-data layer (see above)
-├── tests/
-│   ├── test_model1.py           SARIMA sanity checks
-│   ├── test_model2.py           XGBoost sanity + risk-band checks
-│   ├── test_live_weather.py     offline-safe weather-API unit tests
-│   └── test_live_prediction.py  offline-safe full live-pipeline test (mocked weather)
-├── predict_end_to_end.py        CLI: --live, --historical, --forecast-rainfall
+│   ├── feature_engineering.py              V2 feature generation
+│   ├── preprocessing.py                    canonical feature schema
+│   ├── 02_evaluation.py                    temporal split + model comparison/tuning + final test
+│   ├── evaluation.py                       untouched chronological test report
+│   └── predict_flood.py                    stable inference interface
+├── live/                                   live Open-Meteo prediction layer
+├── tests/                                  offline-safe tests
+├── docs/MODEL_V2.md                        detailed V2 documentation
+├── .github/workflows/retrain-model.yml    free automatic retraining
+├── predict_end_to_end.py                   CLI entry point
 ├── requirements.txt
 └── README.md
 ```
+
+## Model 2 V2 upgrade
+
+Model 2 now uses a chronological:
+
+- **Train:** 1993–2017
+- **Validation:** 2018–2021
+- **Final test:** 2022–2023
+
+It compares Random Forest, XGBoost baseline and a tuned XGBoost configuration
+using **validation PR-AUC**. The final decision threshold is selected on the
+validation period only.
+
+V2 adds:
+
+- day-of-year cyclic seasonality
+- rainfall change from the previous observation
+- normalized 7-day rainfall
+- normalized 30-day rainfall
+- 7-day/30-day rainfall concentration ratio
+- class-imbalance handling
+- stable LOW/MEDIUM/HIGH risk bands
+
+The live feature builder uses the same schema, so training and inference do
+not silently use different feature sets.
+
+Full model notes: `docs/MODEL_V2.md`.
 
 ## Setup
 
@@ -141,41 +156,21 @@ Chennai-FloodSense-AI/
 pip install -r requirements.txt
 ```
 
-## Rebuilding everything from scratch
+## Rebuilding Model 2 from scratch
 
 ```bash
-# 1. Feature engineering (raw CSV -> processed CSVs)
 python model_2_flood/feature_engineering.py
-
-# 2. Train Model 1 (SARIMA)
-python model_1_rainfall/stationarity.py     # optional diagnostics
-python model_1_rainfall/sarima.py           # saves models/rainfall_model.pkl
-
-# 3. Train Model 2 (XGBoost)
-python model_2_flood/preprocessing.py       # saves models/flood_preprocessing.pkl
-python model_2_flood/02_evaluation.py       # trains, compares, saves models/flood_model.pkl
-python model_2_flood/evaluation.py          # prints a full evaluation report
+python model_2_flood/preprocessing.py
+python model_2_flood/02_evaluation.py
+python model_2_flood/evaluation.py
 ```
 
 ## Using it
 
 ```bash
-# Live prediction for a locality (requires internet access to Open-Meteo)
 python predict_end_to_end.py --live Sholinganallur
-
-# Historical backtest (no internet required, uses the 1993-2023 dataset)
 python predict_end_to_end.py --historical Alandur --date 2017-11-13
-
-# Model 1 standalone research forecast
 python predict_end_to_end.py --forecast-rainfall --months 12
-```
-
-Or programmatically:
-
-```python
-from live.live_prediction import predict_live_flood
-result = predict_live_flood("Sholinganallur")
-print(result["current"]["risk_band"], result["next_24h"]["risk_band"])
 ```
 
 ## Running tests
@@ -184,23 +179,23 @@ print(result["current"]["risk_band"], result["next_24h"]["risk_band"])
 python -m pytest tests/ -v
 ```
 
-`test_live_weather.py` and `test_live_prediction.py` are written to run
-fully offline (they use a canned weather fixture / a mocked weather dict)
-so the suite passes even without internet access. Set
-`RUN_LIVE_NETWORK_TESTS=1` to additionally hit the real Open-Meteo API.
+The live weather tests are offline-safe by default. Set
+`RUN_LIVE_NETWORK_TESTS=1` to additionally call the real Open-Meteo API.
 
-## Known limitations / next steps
+## Automatic free retraining
 
-- **Live rainfall log starts empty.** Until `live/rainfall_history.py`'s
-  log has 30+ real daily entries per locality, recent-rainfall features
-  fall back to 1993–2023 seasonal climatology medians, not this week's
-  actual rainfall. Wire up a daily cron job that appends observed
-  rainfall (from the weather API or a rain-gauge feed) via `RainfallLog.append()`.
-- **Version 1 live model ignores temperature/humidity/wind** even though
-  they're available from Open-Meteo, because `flood_model.pkl` was never
-  trained on them. Retraining with those features is future work (Version 2).
-- **Forecast-rainfall risk uses next-24h precipitation as a proxy** for
-  the `rainfall_mm` feature slot the model was trained on with *actual*
-  daily rainfall — a documented approximation, not a perfect substitute.
-- **Model 1 (SARIMA) is monthly**, kept as a separate research/trend
-  component; it is not wired into the live flood-risk path.
+`.github/workflows/retrain-model.yml` rebuilds the Model 2 features, trains the
+candidate models, runs the offline tests, and commits the generated Model 2
+artifacts whenever the historical dataset or Model 2 source code changes.
+No paid ML service is required.
+
+## Known limitations
+
+- The live rainfall log starts empty and falls back to historical seasonal
+  climatology until enough observed entries accumulate.
+- Next-24h flood risk uses forecast precipitation in the rainfall input slot
+  as a documented near-term proxy. A separately trained forecast model would
+  require historical forecast-versus-observed training data.
+- Model 1 (SARIMA) is monthly and remains a separate research/trend component.
+- This is a research/prototype flood-risk classifier, not an official flood
+  warning system.
