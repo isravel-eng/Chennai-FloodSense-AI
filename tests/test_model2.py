@@ -1,11 +1,4 @@
-"""
-test_model2.py
----------------
-Sanity checks for the saved flood-risk model (models/flood_model.pkl)
-and the predict_flood() interface.
-Run: python -m pytest tests/test_model2.py -v
-  or: python tests/test_model2.py
-"""
+"""Sanity checks for the V2 Model 2 artifacts and prediction interface."""
 
 import math
 import pickle
@@ -15,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from model_2_flood.predict_flood import predict_flood, band_for, RISK_BANDS  # noqa: E402
+from model_2_flood.predict_flood import predict_flood, band_for  # noqa: E402
 
 MODELS_DIR = ROOT / "models"
 
@@ -24,8 +17,11 @@ DEMO_LOW = {
     "rainfall_30d_mm": 10.0, "latitude": 13.0604, "longitude": 80.2496,
     "elevation_m_approx": 8, "month": 3,
     "month_sin": math.sin(2 * math.pi * 3 / 12), "month_cos": math.cos(2 * math.pi * 3 / 12),
+    "day_of_year_sin": math.sin(2 * math.pi * 62 / 365.25), "day_of_year_cos": math.cos(2 * math.pi * 62 / 365.25),
     "is_northeast_monsoon": 0,
     "rainfall_lag_1": 0.0, "rainfall_lag_2": 0.0, "rainfall_lag_3": 0.0, "rainfall_lag_7": 0.0,
+    "rainfall_change_1d": 0.0, "rainfall_7d_per_day": 2.0 / 7.0,
+    "rainfall_30d_per_day": 10.0 / 30.0, "rainfall_7d_ratio_30d": 0.2,
 }
 
 DEMO_HIGH = {
@@ -33,8 +29,11 @@ DEMO_HIGH = {
     "rainfall_30d_mm": 900.0, "latitude": 13.0067, "longitude": 80.2,
     "elevation_m_approx": 9, "month": 11,
     "month_sin": math.sin(2 * math.pi * 11 / 12), "month_cos": math.cos(2 * math.pi * 11 / 12),
+    "day_of_year_sin": math.sin(2 * math.pi * 305 / 365.25), "day_of_year_cos": math.cos(2 * math.pi * 305 / 365.25),
     "is_northeast_monsoon": 1,
     "rainfall_lag_1": 180.0, "rainfall_lag_2": 90.0, "rainfall_lag_3": 60.0, "rainfall_lag_7": 30.0,
+    "rainfall_change_1d": 70.0, "rainfall_7d_per_day": 600.0 / 7.0,
+    "rainfall_30d_per_day": 900.0 / 30.0, "rainfall_7d_ratio_30d": 600.0 / 900.0,
 }
 
 
@@ -46,7 +45,7 @@ def test_model_files_exist():
 def test_preprocessing_feature_order():
     with open(MODELS_DIR / "flood_preprocessing.pkl", "rb") as f:
         meta = pickle.load(f)
-    assert len(meta["feature_order"]) == 15
+    assert len(meta["feature_order"]) == 21
     assert meta["feature_order"][0] == "rainfall_mm"
 
 
@@ -54,6 +53,7 @@ def test_predict_returns_expected_shape():
     result = predict_flood(DEMO_LOW)
     assert "probability" in result
     assert "risk_band" in result
+    assert "threshold_used" in result
     assert 0.0 <= result["probability"] <= 1.0
     assert result["risk_band"] in {"LOW", "MEDIUM", "HIGH"}
 
@@ -66,16 +66,13 @@ def test_missing_feature_raises():
         raised = False
     except KeyError:
         raised = True
-    assert raised, "predict_flood should raise KeyError on missing features"
+    assert raised
 
 
 def test_dry_month_scores_lower_than_extreme_monsoon_event():
     low_result = predict_flood(DEMO_LOW)
     high_result = predict_flood(DEMO_HIGH)
-    assert low_result["probability"] < high_result["probability"], (
-        "A dry March reading should score a lower flood probability than "
-        "an extreme November monsoon event with heavy rainfall history."
-    )
+    assert low_result["probability"] < high_result["probability"]
 
 
 def test_band_boundaries():
