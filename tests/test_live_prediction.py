@@ -1,14 +1,4 @@
-"""
-test_live_prediction.py
-------------------------
-Tests the live prediction pipeline WITHOUT hitting the real weather API,
-by feeding a mocked weather dict directly into live_features.py +
-predict_flood.py (the same path live_prediction.py uses internally).
-This keeps the test suite runnable offline / in CI.
-
-Run: python -m pytest tests/test_live_prediction.py -v
-  or: python tests/test_live_prediction.py
-"""
+"""Offline-safe tests for the V2 live feature and prediction pipeline."""
 
 import sys
 from pathlib import Path
@@ -39,14 +29,16 @@ def test_get_recent_rainfall_uses_climatology_when_log_empty():
     assert history["source"] == "climatology_fallback"
 
 
-def test_build_features_produce_15_keys_minus_target():
+def test_build_features_match_v2_schema():
     history = get_recent_rainfall("Sholinganallur", month=11)
-    features = build_current_features(MOCK_WEATHER, history, MOCK_LOCATION, month=11)
+    features = build_current_features(MOCK_WEATHER, history, MOCK_LOCATION, month=11, day_of_year=305)
     expected_keys = {
         "rainfall_mm", "rainfall_3d_mm", "rainfall_7d_mm", "rainfall_30d_mm",
         "latitude", "longitude", "elevation_m_approx", "month", "month_sin",
-        "month_cos", "is_northeast_monsoon",
+        "month_cos", "day_of_year_sin", "day_of_year_cos", "is_northeast_monsoon",
         "rainfall_lag_1", "rainfall_lag_2", "rainfall_lag_3", "rainfall_lag_7",
+        "rainfall_change_1d", "rainfall_7d_per_day", "rainfall_30d_per_day",
+        "rainfall_7d_ratio_30d",
     }
     assert set(features.keys()) == expected_keys
 
@@ -65,6 +57,7 @@ def test_full_pipeline_produces_valid_prediction():
     result = predict_flood(features)
     assert 0.0 <= result["probability"] <= 1.0
     assert result["risk_band"] in {"LOW", "MEDIUM", "HIGH"}
+    assert 0.0 <= result["threshold_used"] <= 1.0
 
 
 def test_monsoon_month_flag_correct():
@@ -73,13 +66,3 @@ def test_monsoon_month_flag_correct():
     assert features["is_northeast_monsoon"] == 1
     features_march = build_current_features(MOCK_WEATHER, history, MOCK_LOCATION, month=3)
     assert features_march["is_northeast_monsoon"] == 0
-
-
-if __name__ == "__main__":
-    test_climatology_fallback_has_required_keys()
-    test_get_recent_rainfall_uses_climatology_when_log_empty()
-    test_build_features_produce_15_keys_minus_target()
-    test_current_vs_forecast_use_different_rainfall_mm()
-    test_full_pipeline_produces_valid_prediction()
-    test_monsoon_month_flag_correct()
-    print("All live prediction tests passed.")
