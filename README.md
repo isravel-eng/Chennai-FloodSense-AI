@@ -34,6 +34,3 @@ The `live/` package converts locality coordinates and live weather/rainfall hist
 
 The branch contains the existing historical dataset and processed ML datasets. Future 2024–2026 data additions must preserve source provenance, locality consistency, temporal ordering and flood-label validity. Do not fabricate locality-level observations by copying city/district totals across localities.
 
-## ML-only rule
-
-Do not add FastAPI application code, React components, PostgreSQL application code, UI implementation or deployment infrastructure here. The integrated application lives on `main`.
