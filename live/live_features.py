@@ -9,7 +9,7 @@ model because the historical training dataset does not contain those fields.
 """
 
 import math
-from datetime import datetime
+from datetime import date, datetime
 
 
 def _month_cyclical(month: int) -> dict:
@@ -60,7 +60,6 @@ def _base_features(location: dict, history: dict, month: int, day_of_year: int) 
 
 
 def build_current_features(weather: dict, history: dict, location: dict, month: int = None, day_of_year: int = None) -> dict:
-    """Current-risk vector using observed precipitation."""
     now = datetime.now()
     month = month or now.month
     day_of_year = day_of_year or now.timetuple().tm_yday
@@ -71,11 +70,53 @@ def build_current_features(weather: dict, history: dict, location: dict, month: 
 
 
 def build_forecast_24h_features(weather: dict, history: dict, location: dict, month: int = None, day_of_year: int = None) -> dict:
-    """Next-24h vector using Open-Meteo forecast precipitation as the rainfall input."""
     now = datetime.now()
     month = month or now.month
     day_of_year = day_of_year or now.timetuple().tm_yday
     features = _base_features(location, history, month, day_of_year)
     features["rainfall_mm"] = float(weather.get("forecast_next_24h_precipitation_mm", 0.0) or 0.0)
     features["rainfall_change_1d"] = features["rainfall_mm"] - features["rainfall_lag_1"]
+    return features
+
+
+def build_future_day_features(
+    weather: dict,
+    history: dict,
+    location: dict,
+    date: date,
+    day_index: int = 0,
+) -> dict:
+    """Build a Model 2 feature vector for a specific future calendar day.
+
+    The daily precipitation forecast is used as the rainfall input. For
+    rolling rainfall fields, observed history is combined with the forecast
+    days already available before the target day. This keeps the feature
+    semantics aligned with the existing Model 2 schema without introducing
+    new training-only columns.
+    """
+    month = date.month
+    features = _base_features(location, history, month, date.timetuple().tm_yday)
+    daily = weather.get("daily_forecast", [])
+    values = [float(x.get("rainfall_mm", 0.0) or 0.0) for x in daily[: day_index + 1]]
+    rainfall_mm = values[-1] if values else 0.0
+
+    prior = values[:-1]
+    last_observed = float(history.get("rainfall_lag_1", 0.0) or 0.0)
+    previous_day = prior[-1] if prior else last_observed
+    features["rainfall_mm"] = rainfall_mm
+    features["rainfall_lag_1"] = previous_day
+    features["rainfall_change_1d"] = rainfall_mm - previous_day
+
+    # Preserve the trained feature schema. Recent observed aggregates remain
+    # the base context; add forecast precipitation conservatively for rolling
+    # windows rather than inventing unobserved historical measurements.
+    features["rainfall_3d_mm"] = float(history["rainfall_3d_mm"]) + sum(prior[-2:])
+    features["rainfall_7d_mm"] = float(history["rainfall_7d_mm"]) + sum(prior[-6:])
+    features["rainfall_30d_mm"] = float(history["rainfall_30d_mm"]) + sum(prior[-29:])
+    features["rainfall_lag_2"] = float(history["rainfall_lag_1"] if not len(prior) else (prior[-2] if len(prior) >= 2 else history["rainfall_lag_1"]))
+    features["rainfall_lag_3"] = float(history["rainfall_lag_2"] if not len(prior) else (prior[-3] if len(prior) >= 3 else history["rainfall_lag_2"]))
+    features["rainfall_lag_7"] = float(history["rainfall_lag_7"])
+    features["rainfall_7d_per_day"] = features["rainfall_7d_mm"] / 7.0
+    features["rainfall_30d_per_day"] = features["rainfall_30d_mm"] / 30.0
+    features["rainfall_7d_ratio_30d"] = features["rainfall_7d_mm"] / (features["rainfall_30d_mm"] + 1e-6)
     return features
