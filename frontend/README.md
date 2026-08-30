@@ -1,28 +1,15 @@
 # Frontend
 
-React-based user interface for Chennai FloodSense AI.
+React + Leaflet + Recharts UI for Chennai FloodSense AI.
 
-## Responsibilities
+## Pages
 
-- Locality selection
-- Interactive Chennai map
-- Current flood-risk display
-- Next-24-hour risk display
-- Low / Medium / High risk visualization
-- Early-warning presentation
-- API error/loading states
+- **Map** — Chennai locality map with current, next-24h and next-7-day flood risk.
+- **Localities** — searchable locality list.
+- **Rainfall Prediction** — locality-wise 12/24/36-month SARIMA rainfall forecast with confidence intervals.
 
-## Backend integration
+## Backend
 
-The frontend should consume the backend under `/api/v1`, primarily:
+Set `VITE_API_BASE_URL` when the API is not running at `http://127.0.0.1:8000/api/v1`.
 
-```text
-GET /api/v1/localities
-GET /api/v1/flood-risk/{locality}
-```
-
-Do not import Python ML code directly into the frontend. The backend is the application boundary.
-
-## Ownership
-
-Frontend developers should add the React application and map components here. ML implementation belongs only to the `machine-learning` branch.
+The frontend uses the backend boundary only; Python ML code is not imported into React.
