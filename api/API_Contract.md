@@ -1,121 +1,53 @@
-# Chennai FloodSense AI — API Contract (Backend ↔ Frontend)
+# Chennai FloodSense AI — API Contract
 
-Base URL while developing locally:http://127.0.0.1:8000
+Base URL while developing locally: `http://127.0.0.1:8000`
 
+## Core endpoints
 
-CORS is open for local development, so this can be called directly from
-a React app running on a different port (e.g. localhost:3000).
+### Health
+`GET /api/v1/health`
 
----
+### Localities
+`GET /api/v1/localities`
 
-## 1. Health check
+Returns locality name, latitude, longitude and elevation.
 
-GET /api/v1/health
+### Current + next 24h + next 7 days flood risk
+`GET /api/v1/flood-risk/{locality}`
 
-Response `200`:
-```json
-{ "status": "ok" }
-```
+Response contains:
 
-Use this to check if the backend is reachable before showing predictions.
+- `current`: observed/current rainfall, probability and risk band
+- `next_24h`: next-24-hour rainfall, probability and risk band
+- `next_7_days`: one row per forecast day containing date, rainfall, flood probability and risk band
+- `context`: recent rainfall and season information
 
----
+### Daily forecast only
+`GET /api/v1/daily-forecast/{locality}`
 
-## 2. Get all supported localities
-GET /api/v1/localities
+Returns the next seven calendar days. The daily rainfall source is the live Open-Meteo forecast; Model 2 converts each forecast day into a flood probability/risk band.
 
-Response `200`:
-```json
-{
-  "count": 30,
-  "localities": [
-    {
-      "name": "Alandur",
-      "latitude": 13.0067,
-      "longitude": 80.2,
-      "elevation_m_approx": 9
-    }
-  ]
-}
-```
+### All-locality live risk
+`GET /api/v1/flood-risk-all`
 
-**Use this to build the locality dropdown/search box.**
-Do NOT hard-code the 30 locality names in the frontend — always fetch
-them from here, so if the backend's data changes, the frontend stays
-in sync automatically.
+Runs the live prediction for every configured locality.
 
----
+## Long-term rainfall
 
-## 3. Get flood risk for a locality (main prediction endpoint)
-GET /api/v1/flood-risk/{locality}
+### City-wide monthly forecast
+`GET /api/v1/rainfall-forecast?months=12`
 
-`{locality}` must be one of the exact names returned by `/api/v1/localities`
-(case-insensitive, but spelling must match — e.g. "Sholinganallur", not "sholinganalur").
-If it has spaces, URL-encode it (e.g. "MYLAPORE-TRIPLICANE TALUK" → `MYLAPORE-TRIPLICANE%20TALUK`).
+Supported horizons: 1–36 months. This is the existing city-wide Model 1 SARIMA forecast.
 
-Example:GET /api/v1/flood-risk/Sholinganallur
+### Locality-wise long-term forecast
+`GET /api/v1/rainfall-forecast/locality/{locality}?months=12`
 
+Supported horizons: 12, 24, or 36 months.
 
-### Success response `200`
-```json
-{
-  "locality": "Sholinganallur",
-  "updated_at": "2026-08-21T17:00",
-  "current": {
-    "rainfall_input_mm": 0.5,
-    "probability": 0.0001,
-    "risk_band": "LOW"
-  },
-  "next_24h": {
-    "forecast_rainfall_mm": 3.1,
-    "probability": 0.0001,
-    "risk_band": "LOW"
-  },
-  "context": {
-    "rainfall_last_7d_mm": 18.2,
-    "rainfall_last_30d_mm": 60.5,
-    "rainfall_history_source": "climatology_fallback",
-    "is_northeast_monsoon": false
-  }
-}
-```
+This endpoint fits a locality-specific seasonal SARIMA model from that locality's historical daily rainfall after monthly aggregation. It does **not** copy the city-wide forecast to the locality. If the locality has fewer than 24 observed monthly points, the API returns `insufficient_historical_data` instead of fabricating a forecast.
 
-**Fields the frontend should display:**
-- `current.risk_band` and `next_24h.risk_band` → the main thing to show,
-  values are always one of: `"LOW"`, `"MEDIUM"`, `"HIGH"`
-  (suggested colors: green / yellow / red)
-- `current.probability` / `next_24h.probability` → a number between 0 and 1,
-  can optionally show as a percentage
-- `updated_at` → timestamp, show as "last updated" text
-- `context.rainfall_history_source` → if this says `"climatology_fallback"`,
-  consider showing a small note like "based on seasonal averages" since
-  it means real recent rainfall data isn't available yet for that locality
+## Important modelling boundary
 
-### Error responses
+Daily 1–7 day rainfall is supplied by the live weather forecast because the historical locality series is irregular and does not support a defensible fitted daily ARIMA/SARIMA model. The academic time-series component remains ARIMA/SARIMA/Holt-Winters and the locality-specific long-term forecast.
 
-| Status | When it happens | Response body |
-|---|---|---|
-| `404` | Locality name not recognized | `{"detail": "Unknown locality '...'. Known localities: ..."}` |
-| `503` | Weather service (Open-Meteo) unreachable/timeout | `{"detail": "Weather service unavailable, try again shortly."}` |
-| `500` | Unexpected server-side error | `{"detail": "Prediction failed: ..."}` |
-
-**Frontend should handle all three** — e.g. show a friendly message like
-"Couldn't get a prediction right now, please try again" rather than a
-blank screen or raw JSON.
-
----
-
-## 4. Known limitations (good to show in the UI)
-
-- Rainfall history may fall back to 1993–2023 seasonal averages instead of
-  real recent data for a locality (`context.rainfall_history_source`).
-  Not a bug — just a data-maturity limitation on Version 1.
-- The model only uses rainfall + location + season — NOT temperature,
-  humidity, or wind, even though those are visually interesting. Don't
-  imply the app is using them.
-
----
-
-## 5. Status
-Last tested and confirmed working: 2026-08-21, against `Sholinganallur`,
-returned real live data successfully.
+The Open-Meteo forecast API supports current conditions, hourly variables and daily aggregations including `precipitation_sum` and `rain_sum`, with timezone-aware daily output. See the provider documentation before deployment.
