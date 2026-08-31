@@ -17,6 +17,5 @@ def forecast_next_7_days(weather: dict, history: dict, location: dict, predict_f
             "rainfall_mm": round(float(item["rainfall_mm"]), 2),
             "probability": prediction["probability"],
             "risk_band": prediction["risk_band"],
-            "threshold_used": prediction["threshold_used"],
         })
     return results
