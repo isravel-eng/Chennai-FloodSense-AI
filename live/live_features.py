@@ -1,122 +1,34 @@
-"""
-live_features.py
------------------
-Builds the exact V2 Model 2 feature vector from live weather + recent rainfall.
-
-The live layer uses only features that are also present in the training data.
-Open-Meteo temperature/humidity/wind are intentionally not passed to the
-model because the historical training dataset does not contain those fields.
-"""
-
-import math
-from datetime import date, datetime
-
-
-def _month_cyclical(month: int) -> dict:
+def build_current_features(weather: dict, history: dict, location: dict) -> dict:
     return {
-        "month_sin": math.sin(2 * math.pi * month / 12),
-        "month_cos": math.cos(2 * math.pi * month / 12),
-    }
-
-
-def _day_cyclical(day_of_year: int) -> dict:
-    return {
-        "day_of_year_sin": math.sin(2 * math.pi * day_of_year / 365.25),
-        "day_of_year_cos": math.cos(2 * math.pi * day_of_year / 365.25),
-    }
-
-
-def _is_northeast_monsoon(month: int) -> int:
-    return 1 if month in (10, 11, 12) else 0
-
-
-def _base_features(location: dict, history: dict, month: int, day_of_year: int) -> dict:
-    cyc = _month_cyclical(month)
-    day_cyc = _day_cyclical(day_of_year)
-    rainfall_mm = float(history.get("rainfall_mm", 0.0) or 0.0)
-    lag_1 = float(history.get("rainfall_lag_1", 0.0) or 0.0)
-    return {
-        "rainfall_3d_mm": float(history["rainfall_3d_mm"]),
-        "rainfall_7d_mm": float(history["rainfall_7d_mm"]),
-        "rainfall_30d_mm": float(history["rainfall_30d_mm"]),
+        "rainfall_mm": float(weather.get("current_precipitation_mm", 0.0) or 0.0),
+        "rainfall_3d_mm": float(history.get("rainfall_3d_mm", 0.0)),
+        "rainfall_7d_mm": float(history.get("rainfall_7d_mm", 0.0)),
+        "rainfall_30d_mm": float(history.get("rainfall_30d_mm", 0.0)),
         "latitude": float(location["latitude"]),
         "longitude": float(location["longitude"]),
-        "elevation_m_approx": float(location["elevation_m_approx"]),
-        "month": month,
-        "month_sin": cyc["month_sin"],
-        "month_cos": cyc["month_cos"],
-        "day_of_year_sin": day_cyc["day_of_year_sin"],
-        "day_of_year_cos": day_cyc["day_of_year_cos"],
-        "is_northeast_monsoon": _is_northeast_monsoon(month),
-        "rainfall_lag_1": lag_1,
-        "rainfall_lag_2": float(history["rainfall_lag_2"]),
-        "rainfall_lag_3": float(history["rainfall_lag_3"]),
-        "rainfall_lag_7": float(history["rainfall_lag_7"]),
-        "rainfall_change_1d": rainfall_mm - lag_1,
-        "rainfall_7d_per_day": float(history["rainfall_7d_mm"]) / 7.0,
-        "rainfall_30d_per_day": float(history["rainfall_30d_mm"]) / 30.0,
-        "rainfall_7d_ratio_30d": float(history["rainfall_7d_mm"]) / (float(history["rainfall_30d_mm"]) + 1e-6),
     }
 
 
-def build_current_features(weather: dict, history: dict, location: dict, month: int = None, day_of_year: int = None) -> dict:
-    now = datetime.now()
-    month = month or now.month
-    day_of_year = day_of_year or now.timetuple().tm_yday
-    features = _base_features(location, history, month, day_of_year)
-    features["rainfall_mm"] = float(weather.get("current_precipitation_mm", 0.0) or 0.0)
-    features["rainfall_change_1d"] = features["rainfall_mm"] - features["rainfall_lag_1"]
-    return features
+def build_forecast_24h_features(weather: dict, history: dict, location: dict) -> dict:
+    return {
+        "rainfall_mm": float(weather.get("forecast_next_24h_precipitation_mm", 0.0) or 0.0),
+        "rainfall_3d_mm": float(history.get("rainfall_3d_mm", 0.0)),
+        "rainfall_7d_mm": float(history.get("rainfall_7d_mm", 0.0)),
+        "rainfall_30d_mm": float(history.get("rainfall_30d_mm", 0.0)),
+        "latitude": float(location["latitude"]),
+        "longitude": float(location["longitude"]),
+    }
 
 
-def build_forecast_24h_features(weather: dict, history: dict, location: dict, month: int = None, day_of_year: int = None) -> dict:
-    now = datetime.now()
-    month = month or now.month
-    day_of_year = day_of_year or now.timetuple().tm_yday
-    features = _base_features(location, history, month, day_of_year)
-    features["rainfall_mm"] = float(weather.get("forecast_next_24h_precipitation_mm", 0.0) or 0.0)
-    features["rainfall_change_1d"] = features["rainfall_mm"] - features["rainfall_lag_1"]
-    return features
-
-
-def build_future_day_features(
-    weather: dict,
-    history: dict,
-    location: dict,
-    date: date,
-    day_index: int = 0,
-) -> dict:
-    """Build a Model 2 feature vector for a specific future calendar day.
-
-    The daily precipitation forecast is used as the rainfall input. For
-    rolling rainfall fields, observed history is combined with the forecast
-    days already available before the target day. This keeps the feature
-    semantics aligned with the existing Model 2 schema without introducing
-    new training-only columns.
-    """
-    month = date.month
-    features = _base_features(location, history, month, date.timetuple().tm_yday)
+def build_future_day_features(weather: dict, history: dict, location: dict, date, day_index: int = 0) -> dict:
     daily = weather.get("daily_forecast", [])
-    values = [float(x.get("rainfall_mm", 0.0) or 0.0) for x in daily[: day_index + 1]]
-    rainfall_mm = values[-1] if values else 0.0
+    rainfall = float(daily[day_index].get("rainfall_mm", 0.0) or 0.0) if day_index < len(daily) else 0.0
 
-    prior = values[:-1]
-    last_observed = float(history.get("rainfall_lag_1", 0.0) or 0.0)
-    previous_day = prior[-1] if prior else last_observed
-    features["rainfall_mm"] = rainfall_mm
-    features["rainfall_lag_1"] = previous_day
-    features["rainfall_change_1d"] = rainfall_mm - previous_day
-
-    # Preserve the trained feature schema. Recent observed aggregates remain
-    # the base context; add forecast precipitation conservatively for rolling
-    # windows rather than inventing unobserved historical measurements.
-    features["rainfall_3d_mm"] = float(history["rainfall_3d_mm"]) + sum(prior[-2:])
-    features["rainfall_7d_mm"] = float(history["rainfall_7d_mm"]) + sum(prior[-6:])
-    features["rainfall_30d_mm"] = float(history["rainfall_30d_mm"]) + sum(prior[-29:])
-    features["rainfall_lag_2"] = float(history["rainfall_lag_1"] if not len(prior) else (prior[-2] if len(prior) >= 2 else history["rainfall_lag_1"]))
-    features["rainfall_lag_3"] = float(history["rainfall_lag_2"] if not len(prior) else (prior[-3] if len(prior) >= 3 else history["rainfall_lag_2"]))
-    features["rainfall_lag_7"] = float(history["rainfall_lag_7"])
-    features["rainfall_7d_per_day"] = features["rainfall_7d_mm"] / 7.0
-    features["rainfall_30d_per_day"] = features["rainfall_30d_mm"] / 30.0
-    features["rainfall_7d_ratio_30d"] = features["rainfall_7d_mm"] / (features["rainfall_30d_mm"] + 1e-6)
-    return features
+    return {
+        "rainfall_mm": rainfall,
+        "rainfall_3d_mm": float(history.get("rainfall_3d_mm", 0.0)),
+        "rainfall_7d_mm": float(history.get("rainfall_7d_mm", 0.0)),
+        "rainfall_30d_mm": float(history.get("rainfall_30d_mm", 0.0)),
+        "latitude": float(location["latitude"]),
+        "longitude": float(location["longitude"]),
+    }
