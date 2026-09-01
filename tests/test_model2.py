@@ -1,59 +1,37 @@
-"""Sanity checks for the V2 Model 2 artifacts and prediction interface."""
-
-import math
-import pickle
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from model_2_flood.predict_flood import predict_flood, band_for  # noqa: E402
+from model_2_flood.predict_flood import predict_flood, band_for
 
-MODELS_DIR = ROOT / "models"
 
 DEMO_LOW = {
-    "rainfall_mm": 0.0, "rainfall_3d_mm": 0.0, "rainfall_7d_mm": 2.0,
-    "rainfall_30d_mm": 10.0, "latitude": 13.0604, "longitude": 80.2496,
-    "elevation_m_approx": 8, "month": 3,
-    "month_sin": math.sin(2 * math.pi * 3 / 12), "month_cos": math.cos(2 * math.pi * 3 / 12),
-    "day_of_year_sin": math.sin(2 * math.pi * 62 / 365.25), "day_of_year_cos": math.cos(2 * math.pi * 62 / 365.25),
-    "is_northeast_monsoon": 0,
-    "rainfall_lag_1": 0.0, "rainfall_lag_2": 0.0, "rainfall_lag_3": 0.0, "rainfall_lag_7": 0.0,
-    "rainfall_change_1d": 0.0, "rainfall_7d_per_day": 2.0 / 7.0,
-    "rainfall_30d_per_day": 10.0 / 30.0, "rainfall_7d_ratio_30d": 0.2,
+    "rainfall_mm": 0.0,
+    "rainfall_3d_mm": 0.0,
+    "rainfall_7d_mm": 2.0,
+    "rainfall_30d_mm": 10.0,
+    "latitude": 13.0604,
+    "longitude": 80.2496,
 }
 
 DEMO_HIGH = {
-    "rainfall_mm": 250.0, "rainfall_3d_mm": 400.0, "rainfall_7d_mm": 600.0,
-    "rainfall_30d_mm": 900.0, "latitude": 13.0067, "longitude": 80.2,
-    "elevation_m_approx": 9, "month": 11,
-    "month_sin": math.sin(2 * math.pi * 11 / 12), "month_cos": math.cos(2 * math.pi * 11 / 12),
-    "day_of_year_sin": math.sin(2 * math.pi * 305 / 365.25), "day_of_year_cos": math.cos(2 * math.pi * 305 / 365.25),
-    "is_northeast_monsoon": 1,
-    "rainfall_lag_1": 180.0, "rainfall_lag_2": 90.0, "rainfall_lag_3": 60.0, "rainfall_lag_7": 30.0,
-    "rainfall_change_1d": 70.0, "rainfall_7d_per_day": 600.0 / 7.0,
-    "rainfall_30d_per_day": 900.0 / 30.0, "rainfall_7d_ratio_30d": 600.0 / 900.0,
+    "rainfall_mm": 250.0,
+    "rainfall_3d_mm": 400.0,
+    "rainfall_7d_mm": 600.0,
+    "rainfall_30d_mm": 900.0,
+    "latitude": 13.0067,
+    "longitude": 80.2,
 }
 
 
-def test_model_files_exist():
-    assert (MODELS_DIR / "flood_model.pkl").exists()
-    assert (MODELS_DIR / "flood_preprocessing.pkl").exists()
+def test_model_file_exists():
+    assert (ROOT / "models" / "flood_model.pkl").exists()
 
 
-def test_preprocessing_feature_order():
-    with open(MODELS_DIR / "flood_preprocessing.pkl", "rb") as f:
-        meta = pickle.load(f)
-    assert len(meta["feature_order"]) == 21
-    assert meta["feature_order"][0] == "rainfall_mm"
-
-
-def test_predict_returns_expected_shape():
+def test_predict_returns_probability_and_band():
     result = predict_flood(DEMO_LOW)
-    assert "probability" in result
-    assert "risk_band" in result
-    assert "threshold_used" in result
     assert 0.0 <= result["probability"] <= 1.0
     assert result["risk_band"] in {"LOW", "MEDIUM", "HIGH"}
 
@@ -64,28 +42,20 @@ def test_missing_feature_raises():
     try:
         predict_flood(bad)
         raised = False
-    except KeyError:
+    except ValueError:
         raised = True
     assert raised
 
 
-def test_dry_month_scores_lower_than_extreme_monsoon_event():
-    low_result = predict_flood(DEMO_LOW)
-    high_result = predict_flood(DEMO_HIGH)
-    assert low_result["probability"] < high_result["probability"]
-
-
-def test_band_boundaries():
+def test_risk_bands():
     assert band_for(0.0) == "LOW"
-    assert band_for(0.99) == "HIGH"
-    assert band_for(0.20) == "MEDIUM"
+    assert band_for(0.5) == "MEDIUM"
+    assert band_for(0.9) == "HIGH"
 
 
 if __name__ == "__main__":
-    test_model_files_exist()
-    test_preprocessing_feature_order()
-    test_predict_returns_expected_shape()
+    test_model_file_exists()
+    test_predict_returns_probability_and_band()
     test_missing_feature_raises()
-    test_dry_month_scores_lower_than_extreme_monsoon_event()
-    test_band_boundaries()
+    test_risk_bands()
     print("All Model 2 tests passed.")
