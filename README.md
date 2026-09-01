@@ -1,36 +1,93 @@
 # Chennai FloodSense AI — Machine Learning
 
-This branch is the **single source of truth for all Machine Learning work** in Chennai FloodSense AI.
+This branch is the **single source of truth for the ML implementation**.
 
-## Branch scope
+## Simple ML structure
 
 ```text
 machine-learning/
-├── data/                 # ML datasets and processed features
-├── model_1_rainfall/     # Model 1: rainfall forecasting
-├── model_2_flood/        # Model 2: locality flood-risk classifier
-├── live/                 # ML live-weather feature/prediction layer
-├── models/               # trained ML artifacts
-├── tests/                # ML tests
-├── docs/                 # ML documentation, evaluation and build records
-├── .github/              # ML retraining automation
-├── predict_end_to_end.py # ML-only CLI
-└── requirements.txt      # ML dependencies
+├── data/
+├── model_1_rainfall/
+│   └── sarima.py
+├── model_2_flood/
+│   ├── feature_engineering.py
+│   ├── train.py
+│   └── predict_flood.py
+├── live/
+├── models/
+├── tests/
+└── docs/
 ```
 
-## Model 1
+## Model 1 — Rainfall Forecasting
 
-SARIMA-based city-wide monthly rainfall forecasting. This is a research/trend component and is kept separate from the near-term live flood-risk path.
+**Algorithm:** SARIMA
 
-## Model 2
+```text
+Historical monthly rainfall
+        ↓
+      SARIMA
+        ↓
+Rainfall forecast
+```
 
-XGBoost/RandomForest flood-risk classification workflow with feature engineering, preprocessing, evaluation and live inference support. Model selection uses PR-AUC because documented flood events are a rare class.
+The model uses a simple seasonal configuration with a 12-month period. It forecasts city-wide monthly rainfall and is a trend/research component.
 
-## Live ML layer
+Run:
 
-The `live/` package converts locality coordinates and live weather/rainfall history into the feature contract expected by the flood-risk model and produces current and next-24-hour risk predictions.
+```bash
+python model_1_rainfall/sarima.py
+```
 
-## Data
+## Model 2 — Flood Risk
 
-The branch contains the existing historical dataset and processed ML datasets. Future 2024–2026 data additions must preserve source provenance, locality consistency, temporal ordering and flood-label validity. Do not fabricate locality-level observations by copying city/district totals across localities.
+**Algorithm:** Random Forest Classifier
 
+The model uses six easy-to-explain inputs:
+
+```text
+rainfall_mm
+rainfall_3d_mm
+rainfall_7d_mm
+rainfall_30d_mm
+latitude
+longitude
+```
+
+```text
+Rainfall + Location
+        ↓
+   Random Forest
+        ↓
+ Flood probability
+        ↓
+   LOW / MEDIUM / HIGH
+```
+
+Build features and train:
+
+```bash
+python model_2_flood/feature_engineering.py
+python model_2_flood/train.py
+```
+
+The prediction interface is:
+
+```python
+from model_2_flood.predict_flood import predict_flood
+
+result = predict_flood({
+    "rainfall_mm": 80,
+    "rainfall_3d_mm": 140,
+    "rainfall_7d_mm": 220,
+    "rainfall_30d_mm": 300,
+    "latitude": 13.05,
+    "longitude": 80.25,
+})
+```
+
+## Important
+
+The old XGBoost comparison, tuned-model selection, 20-feature preprocessing contract and validation-threshold pipeline have been removed from the canonical implementation because they made the project unnecessarily difficult to explain.
+
+The current ML implementation is intentionally simple and presentation-friendly. The previous implementation is preserved in `machine-learning-backup-2026-09-01`.
