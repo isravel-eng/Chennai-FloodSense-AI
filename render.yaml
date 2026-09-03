@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: chennai-floodsense-api
+    runtime: python
+    plan: free
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health

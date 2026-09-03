@@ -37,11 +37,15 @@ results/
 # Python distribution
 dist/
 build/
-*.egg-info/.venv/
-__pycache__/
-*.pyc
+*.egg-info/
+
+# Node
 node_modules/
 frontend/node_modules/
+
+# Dependency lockfiles generated locally
 package-lock.json
 frontend/package-lock.json
+
+# Runtime-generated rainfall cache/log
 data/processed/live_rainfall_log.csv
