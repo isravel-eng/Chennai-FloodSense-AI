@@ -20,18 +20,26 @@ CANDIDATE_SEASONAL = [(1, 1, 1, 12), (0, 1, 1, 12), (1, 1, 0, 12)]
 MIN_MONTHS = 24
 
 
-def _read_history_file(path: Path) -> pd.DataFrame:
+def _read_history_file(path: Path, *, required: bool = False) -> pd.DataFrame:
+    """Read a rainfall history file without exposing server filesystem paths."""
     if not path.exists():
+        if required:
+            raise RuntimeError("Required rainfall history dataset is missing")
         return pd.DataFrame(columns=["date", "locality", "rainfall_mm"])
+
     df = pd.read_csv(path)
     if not {"locality", "rainfall_mm"}.issubset(df.columns):
-        raise ValueError(f"Rainfall history file {path} must contain locality and rainfall_mm")
+        raise RuntimeError("Rainfall history dataset has invalid columns")
+
     if "date" in df.columns:
         dates = pd.to_datetime(df["date"], errors="coerce")
     elif {"year", "month"}.issubset(df.columns):
-        dates = pd.to_datetime(dict(year=df["year"], month=df["month"], day=1), errors="coerce")
+        dates = pd.to_datetime(
+            dict(year=df["year"], month=df["month"], day=1), errors="coerce"
+        )
     else:
-        raise ValueError(f"Rainfall history file {path} needs date or year/month columns")
+        raise RuntimeError("Rainfall history dataset needs date or year/month columns")
+
     df = df.copy()
     df["date"] = dates
     df["rainfall_mm"] = pd.to_numeric(df["rainfall_mm"], errors="coerce")
@@ -41,10 +49,11 @@ def _read_history_file(path: Path) -> pd.DataFrame:
 def load_locality_monthly(locality: str, data_path: Path = DATA_PATH) -> pd.Series:
     """Load historical rainfall and append any newer live observations.
 
-    Live observations are optional. When present, they are combined with the
-    static dataset so the forecast starts after the latest real observation.
+    The static dataset is required. Live observations are optional. When
+    present, they are combined with the static dataset so the forecast starts
+    after the latest real observation.
     """
-    base = _read_history_file(data_path)
+    base = _read_history_file(data_path, required=True)
     live = _read_history_file(LIVE_LOG_PATH)
     frames = [base]
     if not live.empty:
@@ -56,9 +65,11 @@ def load_locality_monthly(locality: str, data_path: Path = DATA_PATH) -> pd.Seri
     if subset.empty:
         raise ValueError(f"Unknown locality or no rainfall history: {locality}")
 
-    # De-duplicate the same locality/date. Prefer the most recently appended
-    # live value when a date exists in both sources.
-    subset = subset.sort_values("date").drop_duplicates(subset=["date"], keep="last")
+    # Preserve concat order (base first, live second) so that when the same
+    # locality/date exists in both sources, the live value wins deterministically.
+    subset = subset.sort_values("date", kind="mergesort").drop_duplicates(
+        subset=["date"], keep="last"
+    )
     monthly = subset.set_index("date")["rainfall_mm"].resample("MS").sum(min_count=1)
     monthly.index = pd.DatetimeIndex(monthly.index, freq="MS")
     return monthly
@@ -96,7 +107,11 @@ def _fallback_forecast(observed: pd.Series, horizon_months: int) -> list[dict]:
     else:
         slope, intercept = np.polyfit(x, y, 1)
     fitted = intercept + slope * x
-    residual_std = float(np.std(y - fitted, ddof=1)) if len(y) > 2 else max(float(np.mean(y)) * 0.25, 1.0)
+    residual_std = (
+        float(np.std(y - fitted, ddof=1))
+        if len(y) > 2
+        else max(float(np.mean(y)) * 0.25, 1.0)
+    )
     future_x = np.arange(len(y), len(y) + horizon_months, dtype=float)
     values = np.maximum(intercept + slope * future_x, 0.0)
     margin = max(1.96 * residual_std, 1.0)
@@ -171,7 +186,12 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
         # Use the model's forecast index so dates advance naturally from the
         # latest observation and remain correct when data reaches 2026, 2027, etc.
         dates = pd.DatetimeIndex(future.predicted_mean.index)
-        if len(dates) != horizon_months:
+        if len(dates) != horizon_months or not isinstance(dates, pd.DatetimeIndex):
+            dates = pd.date_range(start=forecast_start, periods=horizon_months, freq="MS")
+
+        # Some sparse histories make statsmodels discard the calendar index and
+        # return a positional index. In that case, use the known calendar origin.
+        if not isinstance(future.predicted_mean.index, pd.DatetimeIndex) or dates[0] < forecast_start:
             dates = pd.date_range(start=forecast_start, periods=horizon_months, freq="MS")
 
         rows = [
