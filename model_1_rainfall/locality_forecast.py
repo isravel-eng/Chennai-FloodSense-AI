@@ -3,8 +3,9 @@
 Uses SARIMA when enough history is available and a deterministic linear-trend
 fallback when a locality has a short history or SARIMA cannot be fitted.
 
-The forecast origin is always the latest available observation in the data
-(and therefore advances automatically as the dataset is updated).
+The forecast timeline is anchored to the current calendar month. Historical
+observations are still used for model fitting, but the returned forecast months
+always begin in the month in which the request is made.
 """
 
 from pathlib import Path
@@ -49,9 +50,9 @@ def _read_history_file(path: Path, *, required: bool = False) -> pd.DataFrame:
 def load_locality_monthly(locality: str, data_path: Path = DATA_PATH) -> pd.Series:
     """Load historical rainfall and append any newer live observations.
 
-    The static dataset is required. Live observations are optional. When
-    present, they are combined with the static dataset so the forecast starts
-    after the latest real observation.
+    The static dataset is required. Live observations are optional. They are
+    combined for model fitting, while the forecast output timeline is anchored
+    independently to the current calendar month.
     """
     base = _read_history_file(data_path, required=True)
     live = _read_history_file(LIVE_LOG_PATH)
@@ -98,6 +99,20 @@ def _select_model(series: pd.Series):
     return best
 
 
+def _current_month_start() -> pd.Timestamp:
+    """Return the first day of the current calendar month."""
+    return pd.Timestamp.today().to_period("M").to_timestamp()
+
+
+def _forecast_dates(horizon_months: int) -> pd.DatetimeIndex:
+    """Build forecast labels from the current month for the requested horizon."""
+    return pd.date_range(
+        start=_current_month_start(),
+        periods=horizon_months,
+        freq="MS",
+    )
+
+
 def _fallback_forecast(observed: pd.Series, horizon_months: int) -> list[dict]:
     """Forecast with a simple non-negative linear trend for short/failed histories."""
     y = observed.dropna().astype(float).to_numpy()
@@ -115,8 +130,7 @@ def _fallback_forecast(observed: pd.Series, horizon_months: int) -> list[dict]:
     future_x = np.arange(len(y), len(y) + horizon_months, dtype=float)
     values = np.maximum(intercept + slope * future_x, 0.0)
     margin = max(1.96 * residual_std, 1.0)
-    start = observed.index.max() + pd.offsets.MonthBegin(1)
-    dates = pd.date_range(start=start, periods=horizon_months, freq="MS")
+    dates = _forecast_dates(horizon_months)
     return [
         {
             "month": ts.strftime("%Y-%m"),
@@ -137,9 +151,9 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
     if observed.empty:
         raise ValueError(f"Unknown locality or no rainfall history: {locality}")
 
-    # IMPORTANT: forecast dates are anchored to the latest available real
-    # observation, not to a hard-coded historical year.
-    forecast_start = observed.index.max() + pd.offsets.MonthBegin(1)
+    # IMPORTANT: forecast labels always begin in the current calendar month.
+    # This is independent of the last historical observation used for fitting.
+    forecast_start = _current_month_start()
 
     # Short histories cannot support a reliable seasonal SARIMA fit.
     if len(observed) < MIN_MONTHS:
@@ -183,16 +197,9 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
         lower = np.maximum(np.asarray(ci.iloc[:, 0], dtype=float), 0.0)
         upper = np.maximum(np.asarray(ci.iloc[:, 1], dtype=float), 0.0)
 
-        # Use the model's forecast index so dates advance naturally from the
-        # latest observation and remain correct when data reaches 2026, 2027, etc.
-        dates = pd.DatetimeIndex(future.predicted_mean.index)
-        if len(dates) != horizon_months or not isinstance(dates, pd.DatetimeIndex):
-            dates = pd.date_range(start=forecast_start, periods=horizon_months, freq="MS")
-
-        # Some sparse histories make statsmodels discard the calendar index and
-        # return a positional index. In that case, use the known calendar origin.
-        if not isinstance(future.predicted_mean.index, pd.DatetimeIndex) or dates[0] < forecast_start:
-            dates = pd.date_range(start=forecast_start, periods=horizon_months, freq="MS")
+        # Deliberately label the requested prediction window from the current
+        # month rather than from the final timestamp in the historical dataset.
+        dates = _forecast_dates(horizon_months)
 
         rows = [
             {
@@ -208,7 +215,7 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
         return {
             "locality": locality,
             "status": "fallback_forecast",
-            "message": "SARIMA forecast index was unavailable; showing a simple trend forecast",
+            "message": "SARIMA forecast failed; showing a simple trend forecast",
             "observed_months": int(len(observed)),
             "first_observation": str(observed.index.min().date()),
             "last_observation": str(observed.index.max().date()),
