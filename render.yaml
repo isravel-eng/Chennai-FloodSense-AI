@@ -13,4 +13,6 @@ services:
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false          # set manually in Render dashboard — keep secret
       - key: FRONTEND_ORIGIN
-        sync: false          # set to your Vercel URL, e.g. https://your-app.vercel.app
+        sync: false          # set to your Render frontend URL, e.g. https://chennai-floodsense-ai-1.onrender.com
+      - key: REQUIRE_EMAIL_CONFIRMATION
+        sync: false          # set to "true" to require email verification before login; default is "false" (auto-confirm, recommended for demo/staging)

@@ -84,16 +84,26 @@ function AuthProvider({ children }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, email, password, native_locality }),
     });
-    // If Supabase is configured client-side, set the session directly
+
+    if (data.requires_verification) {
+      // Email confirmation required — do NOT attempt login.
+      // Return a sentinel so the caller can show the verification message.
+      return { requiresVerification: true, email };
+    }
+
+    // Auto-confirmed path: backend returned a session immediately.
     if (supabase && data.session?.access_token) {
       await supabase.auth.setSession({
         access_token: data.session.access_token,
         refresh_token: data.session.refresh_token,
       });
-    } else {
-      // Trigger login flow
-      await login({ email, password });
+    } else if (data.session?.access_token) {
+      // Fallback when Supabase client-side is not configured.
+      setSession({ access_token: data.session.access_token, ...data.session });
+      setProfile({ id: data.id, name: data.name, email: data.email, native_locality: data.native_locality });
     }
+    // If no session was returned and no verification is needed, the backend
+    // had an unexpected state — surface that to the caller.
     return data;
   }, []);
 
@@ -147,7 +157,14 @@ function useAuth() { return useContext(AuthContext); }
 // ---------------------------------------------------------------------------
 function AuthPage({ localities }) {
   const [tab, setTab] = useState('login');
+  const [verificationPending, setVerificationPending] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState('');
   const { login, register } = useAuth();
+
+  function handleVerificationRequired(email) {
+    setPendingEmail(email);
+    setVerificationPending(true);
+  }
 
   return (
     <div className="authPage">
@@ -157,13 +174,33 @@ function AuthPage({ localities }) {
           <span>Chennai <b>FloodSense AI</b></span>
         </div>
         <p className="authTagline">Live flood monitoring for Chennai's Northeast Monsoon season</p>
-        <div className="authTabs">
-          <button className={tab === 'login' ? 'active' : ''} onClick={() => setTab('login')}>Sign In</button>
-          <button className={tab === 'register' ? 'active' : ''} onClick={() => setTab('register')}>Create Account</button>
-        </div>
-        {tab === 'login'
-          ? <LoginForm onLogin={login} />
-          : <RegisterForm onRegister={register} localities={localities} />}
+
+        {verificationPending ? (
+          <div className="verifyBox">
+            <div className="verifyIcon">✉️</div>
+            <h2>Verify your email</h2>
+            <p>
+              Account created for <b>{pendingEmail}</b>.<br />
+              Please check your inbox and click the verification link before signing in.
+            </p>
+            <button
+              className="primary fullButton"
+              onClick={() => { setVerificationPending(false); setPendingEmail(''); setTab('login'); }}
+            >
+              Go to Sign In
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="authTabs">
+              <button className={tab === 'login' ? 'active' : ''} onClick={() => setTab('login')}>Sign In</button>
+              <button className={tab === 'register' ? 'active' : ''} onClick={() => setTab('register')}>Create Account</button>
+            </div>
+            {tab === 'login'
+              ? <LoginForm onLogin={login} />
+              : <RegisterForm onRegister={register} localities={localities} onVerificationRequired={handleVerificationRequired} />}
+          </>
+        )}
       </div>
     </div>
   );
@@ -197,7 +234,7 @@ function LoginForm({ onLogin }) {
   );
 }
 
-function RegisterForm({ onRegister, localities }) {
+function RegisterForm({ onRegister, localities, onVerificationRequired }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -212,7 +249,14 @@ function RegisterForm({ onRegister, localities }) {
     if (password !== confirm) { setError('Passwords do not match.'); return; }
     if (!locality) { setError('Please select your native locality.'); return; }
     setLoading(true);
-    try { await onRegister({ name: name.trim(), email: email.trim(), password, native_locality: locality }); }
+    try {
+      const result = await onRegister({ name: name.trim(), email: email.trim(), password, native_locality: locality });
+      // Case B: email verification required — hand off to parent to show message.
+      if (result?.requiresVerification && onVerificationRequired) {
+        onVerificationRequired(result.email || email.trim());
+      }
+      // Case A: session was set by onRegister — AuthProvider handles the transition.
+    }
     catch (err) { setError(err.message); }
     finally { setLoading(false); }
   }

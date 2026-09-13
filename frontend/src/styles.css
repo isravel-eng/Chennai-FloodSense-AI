@@ -65,6 +65,9 @@
 
 .authForm{display:flex;flex-direction:column;gap:6px}.authForm label{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#7a8fa3;margin-top:6px}.authForm input,.authForm select{padding:12px 14px;border:1.5px solid #d5dee7;border-radius:10px;font-size:15px;color:#102033;background:#fff;outline:none;transition:border-color .2s,box-shadow .2s}.authForm input:focus,.authForm select:focus{border-color:#1976d2;box-shadow:0 0 0 3px rgba(25,118,210,.1)}.authForm .primary{margin-top:14px;padding:14px;font-size:15px;border-radius:11px}
 
+/* ---- Verification pending box ---- */
+.verifyBox{text-align:center;padding:10px 0}.verifyBox h2{font-size:21px;margin:8px 0 12px}.verifyBox p{color:#536576;font-size:14px;line-height:1.65;margin:0 0 20px}.verifyIcon{font-size:44px;margin-bottom:8px}
+
 /* ============================================================
    Responsive
    ============================================================ */
