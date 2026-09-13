@@ -22,9 +22,12 @@ Thumbs.db
 # Logs
 *.log
 
-# Environment variables
+# Environment variables — real secrets (never commit)
 .env
 .env.*
+# Allow template/example files (contain no real secrets)
+!.env.example
+!frontend/.env.example
 
 # Temporary files
 *.tmp

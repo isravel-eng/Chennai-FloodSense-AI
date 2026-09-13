@@ -18,6 +18,23 @@ DATA_PATH = ROOT / "data" / "raw" / "master_dataset.csv"
 LIVE_LOG_PATH = ROOT / "data" / "processed" / "live_rainfall_log.csv"
 CANDIDATE_ORDERS = [(1, 0, 1), (1, 1, 1), (0, 1, 1), (1, 0, 0), (2, 1, 1)]
 CANDIDATE_SEASONAL = [(1, 1, 1, 12), (0, 1, 1, 12), (1, 1, 0, 12)]
+
+
+def _load_live_log_for_locality(locality: str) -> pd.DataFrame:
+    """Return live rainfall observations from PostgreSQL or the CSV fallback.
+
+    Returns a DataFrame with [date, locality, rainfall_mm] — the same shape
+    as _read_history_file() so load_locality_monthly() can use it directly.
+    """
+    try:
+        from backend.database import is_configured
+        if is_configured():
+            from backend.repositories import rainfall_repository
+            return rainfall_repository.read_as_monthly_series(locality)
+    except Exception:
+        pass
+    # Fall back to the CSV-based live log
+    return _read_history_file(LIVE_LOG_PATH)
 MIN_MONTHS = 24
 
 
@@ -55,7 +72,7 @@ def load_locality_monthly(locality: str, data_path: Path = DATA_PATH) -> pd.Seri
     independently to the current calendar month.
     """
     base = _read_history_file(data_path, required=True)
-    live = _read_history_file(LIVE_LOG_PATH)
+    live = _load_live_log_for_locality(locality)
     frames = [base]
     if not live.empty:
         frames.append(live)
