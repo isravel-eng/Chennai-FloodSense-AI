@@ -11,7 +11,7 @@ Public (no authentication required):
   GET  /api/v1/rainfall-forecast/locality/{locality}
   GET  /api/v1/rainfall-forecast
 
-Authentication (uses Supabase Auth via anon client):
+Authentication (uses Supabase Admin Auth via service-role client):
   POST /api/v1/auth/register   — create Supabase Auth account + profile row
   POST /api/v1/auth/login      — sign in, returns session tokens
   POST /api/v1/auth/logout     — invalidate session
@@ -25,6 +25,11 @@ Rainfall log (authenticated read; service-role write handled internally):
 Design decisions:
   - Flood-risk / forecast endpoints remain public so the map loads without login.
   - User-specific and write endpoints require auth.
+  - Registration uses auth.admin.create_user() (service-role path) so the
+    backend has full control over email confirmation and the user UUID is
+    available immediately.
+  - Email confirmation behaviour is controlled by REQUIRE_EMAIL_CONFIRMATION
+    env var (default "false" for demo/staging; set "true" for production).
   - CORS origin is read from FRONTEND_ORIGIN env var; defaults to "*" so local
     dev works without configuration.
   - Supabase credentials are never returned to the client.
@@ -32,6 +37,7 @@ Design decisions:
 
 from __future__ import annotations
 
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -54,6 +60,8 @@ from model_1_rainfall.locality_forecast import forecast_locality
 LOOKUP_PATH = ROOT / "data" / "processed" / "locality_lookup.csv"
 RAINFALL_MODEL_PATH = ROOT / "models" / "rainfall_model.pkl"
 
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # FastAPI app setup
 # ---------------------------------------------------------------------------
@@ -61,6 +69,8 @@ RAINFALL_MODEL_PATH = ROOT / "models" / "rainfall_model.pkl"
 app = FastAPI(title="Chennai FloodSense AI API")
 
 # CORS: tighten in production by setting FRONTEND_ORIGIN env var.
+# In local dev, leaving FRONTEND_ORIGIN unset (or "*") allows any origin.
+# In production on Render: FRONTEND_ORIGIN=https://chennai-floodsense-ai-1.onrender.com
 _allowed_origins_raw = os.environ.get("FRONTEND_ORIGIN", "*")
 _allowed_origins = (
     ["*"]
@@ -74,6 +84,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Email confirmation configuration
+# ---------------------------------------------------------------------------
+
+def _email_confirm_enabled() -> bool:
+    """Return True when production email-verification mode is active.
+
+    Set REQUIRE_EMAIL_CONFIRMATION=true in the Render backend environment to
+    require users to verify their email before they can log in.
+
+    Default is False (demo/staging mode) — users are auto-confirmed and can
+    log in immediately after registration.
+    """
+    return os.environ.get("REQUIRE_EMAIL_CONFIRMATION", "false").lower() == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +122,9 @@ def _get_db():
 def _verify_jwt(authorization: str) -> dict:
     """Verify a bearer token with Supabase and return the user dict.
 
+    Uses the service-role client's auth.get_user() which validates the JWT
+    server-side without trusting any user-supplied ID.
+
     Raises HTTPException(401) on any failure.
     """
     if not _supabase_configured():
@@ -103,16 +132,20 @@ def _verify_jwt(authorization: str) -> dict:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing or malformed Authorization header")
     token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Empty bearer token")
     try:
         db = _get_db()
         response = db.auth.get_user(token)
         if response is None or response.user is None:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
-        return {"id": response.user.id, "email": response.user.email}
+        return {"id": str(response.user.id), "email": response.user.email}
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=401, detail=f"Token verification failed: {exc}")
+        # Log the real error server-side; return a safe message to the client.
+        logger.warning("JWT verification failed: %s", exc)
+        raise HTTPException(status_code=401, detail="Token verification failed")
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +160,12 @@ def _known_localities() -> list[str]:
 
 def _known_locality_names_lower() -> set[str]:
     return {n.lower() for n in _known_localities()}
+
+
+def _canonical_locality(name: str) -> str | None:
+    """Return the canonical locality name (preserving original casing) or None."""
+    lookup = {n.lower(): n for n in _known_localities()}
+    return lookup.get(name.lower())
 
 
 # ---------------------------------------------------------------------------
@@ -286,68 +325,161 @@ class LoginRequest(BaseModel):
     password: str
 
 
+def _is_duplicate_email_error(exc: Exception) -> bool:
+    """Detect Supabase duplicate-email errors from the admin API response."""
+    msg = str(exc).lower()
+    return any(phrase in msg for phrase in (
+        "already registered",
+        "already exists",
+        "user already registered",
+        "email address already registered",
+        "duplicate",
+    ))
+
+
 @app.post("/api/v1/auth/register", status_code=201)
 def register(body: RegisterRequest):
+    """Create a Supabase Auth account and a public.users profile row.
+
+    Registration flow:
+      1. Validate inputs (locality, non-empty fields).
+      2. Create the auth.users row via auth.admin.create_user() — the admin API
+         bypasses email rate-limits and gives us full control over confirmation.
+      3. Insert the public.users profile using the exact UUID returned by Auth.
+      4. If profile insertion fails, delete the auth user to avoid orphans.
+
+    Email confirmation behaviour (controlled by REQUIRE_EMAIL_CONFIRMATION env var):
+      - false (default/demo): user is auto-confirmed → session returned immediately.
+      - true  (production):   user must verify email → requires_verification=true,
+                               no session in response.
+    """
     if not _supabase_configured():
         raise HTTPException(status_code=503, detail="Authentication service not configured")
 
-    # Validate locality against known list
-    if body.native_locality.lower() not in _known_locality_names_lower():
+    # --- Input validation ---
+    name = body.name.strip()
+    email = body.email.lower().strip()
+    native_locality = body.native_locality.strip()
+
+    if not name:
+        raise HTTPException(status_code=422, detail="Name is required.")
+    if not email:
+        raise HTTPException(status_code=422, detail="Email is required.")
+    if len(body.password) < 6:
+        raise HTTPException(status_code=422, detail="Password must be at least 6 characters.")
+
+    # --- Locality validation ---
+    canonical = _canonical_locality(native_locality)
+    if canonical is None:
         raise HTTPException(
             status_code=422,
-            detail=f"Unknown locality '{body.native_locality}'. "
-            "Use GET /api/v1/localities to see supported options.",
+            detail=(
+                f"Unknown locality '{native_locality}'. "
+                "Use GET /api/v1/localities to see supported options."
+            ),
         )
 
     db = _get_db()
+    confirm_immediately = not _email_confirm_enabled()
 
-    # 1. Create Supabase Auth account
+    # --- Step 1: Create Supabase Auth user via Admin API ---
+    # Using admin.create_user() instead of auth.sign_up() because:
+    #   - The admin API uses the service-role key path — no anon rate limits.
+    #   - email_confirm parameter gives explicit control over confirmation state.
+    #   - The returned user.id is immediately usable for the FK insert.
+    auth_user = None
     try:
-        auth_resp = db.auth.sign_up(
-            {"email": body.email, "password": body.password}
+        resp = db.auth.admin.create_user(
+            {
+                "email": email,
+                "password": body.password,
+                "email_confirm": confirm_immediately,
+            }
         )
+        auth_user = resp.user
     except Exception as exc:
-        error_msg = str(exc).lower()
-        if "already registered" in error_msg or "already exists" in error_msg:
-            raise HTTPException(status_code=409, detail="An account with this email already exists.")
-        raise HTTPException(status_code=422, detail=f"Registration failed: {exc}")
+        if _is_duplicate_email_error(exc):
+            raise HTTPException(
+                status_code=409,
+                detail="An account with this email already exists.",
+            )
+        # Log full error server-side, return safe message to client.
+        logger.error("Auth user creation failed for %s: %s", email, exc)
+        raise HTTPException(
+            status_code=422,
+            detail="Registration failed. Please check your details and try again.",
+        )
 
-    if auth_resp is None or auth_resp.user is None:
-        raise HTTPException(status_code=422, detail="Registration failed — Supabase returned no user.")
+    if auth_user is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Registration failed — Auth service returned no user.",
+        )
 
-    user_id = auth_resp.user.id
+    user_id = str(auth_user.id)
 
-    # 2. Insert application profile row
+    # --- Step 2: Insert public.users profile ---
+    # The service-role client bypasses RLS, so the insert succeeds even before
+    # the user has a session. The FK references auth.users(id) which is now
+    # committed because admin.create_user() returned successfully.
     try:
         db.table("users").insert(
             {
                 "id": user_id,
-                "name": body.name.strip(),
-                "email": body.email.lower().strip(),
-                "native_locality": body.native_locality,
+                "name": name,
+                "email": email,
+                "native_locality": canonical,
             }
         ).execute()
     except Exception as exc:
-        # Profile insert failed — attempt to clean up the auth account
+        # Profile insert failed — clean up the auth user to prevent orphans.
         try:
             db.auth.admin.delete_user(user_id)
-        except Exception:
-            pass
+            logger.info("Cleaned up orphaned auth user %s after profile insert failure", user_id)
+        except Exception as cleanup_exc:
+            logger.error("Failed to clean up auth user %s: %s", user_id, cleanup_exc)
+
+        logger.error("Profile insert failed for user %s: %s", user_id, exc)
         raise HTTPException(
             status_code=500,
-            detail=f"Account created but profile could not be saved: {exc}",
+            detail="Account setup failed. Please try registering again.",
         )
 
-    return {
-        "id": user_id,
-        "name": body.name.strip(),
-        "email": body.email.lower().strip(),
-        "native_locality": body.native_locality,
-        "session": {
-            "access_token": auth_resp.session.access_token if auth_resp.session else None,
-            "refresh_token": auth_resp.session.refresh_token if auth_resp.session else None,
-        },
-    }
+    # --- Step 3: Return response ---
+    if confirm_immediately:
+        # Auto-confirmed: sign the user in to get a session token.
+        # We sign in here because admin.create_user() doesn't return a session.
+        try:
+            sign_in_resp = db.auth.sign_in_with_password(
+                {"email": email, "password": body.password}
+            )
+            session_data = {
+                "access_token": sign_in_resp.session.access_token,
+                "refresh_token": sign_in_resp.session.refresh_token,
+                "expires_in": sign_in_resp.session.expires_in,
+            } if sign_in_resp and sign_in_resp.session else None
+        except Exception as exc:
+            logger.warning("Post-registration sign-in failed for %s: %s", email, exc)
+            session_data = None
+
+        return {
+            "id": user_id,
+            "name": name,
+            "email": email,
+            "native_locality": canonical,
+            "requires_verification": False,
+            "session": session_data,
+        }
+    else:
+        # Email confirmation required — no session yet.
+        return {
+            "id": user_id,
+            "name": name,
+            "email": email,
+            "native_locality": canonical,
+            "requires_verification": True,
+            "session": None,
+        }
 
 
 @app.post("/api/v1/auth/login")
@@ -357,23 +489,28 @@ def login(body: LoginRequest):
     db = _get_db()
     try:
         resp = db.auth.sign_in_with_password(
-            {"email": body.email, "password": body.password}
+            {"email": body.email.lower().strip(), "password": body.password}
         )
     except Exception as exc:
+        logger.info("Login failed for %s: %s", body.email, exc)
         raise HTTPException(status_code=401, detail="Invalid email or password.")
 
     if resp is None or resp.session is None:
         raise HTTPException(status_code=401, detail="Invalid email or password.")
 
-    # Fetch application profile
-    profile_resp = (
-        db.table("users")
-        .select("id, name, email, native_locality, created_at")
-        .eq("id", resp.user.id)
-        .single()
-        .execute()
-    )
-    profile = profile_resp.data or {}
+    # Fetch application profile using service-role client (bypasses RLS)
+    try:
+        profile_resp = (
+            db.table("users")
+            .select("id, name, email, native_locality, created_at")
+            .eq("id", str(resp.user.id))
+            .single()
+            .execute()
+        )
+        profile = profile_resp.data or {}
+    except Exception as exc:
+        logger.warning("Could not fetch profile for %s after login: %s", resp.user.id, exc)
+        profile = {}
 
     return {
         "session": {
@@ -382,7 +519,7 @@ def login(body: LoginRequest):
             "expires_in": resp.session.expires_in,
         },
         "user": {
-            "id": resp.user.id,
+            "id": str(resp.user.id),
             "email": resp.user.email,
             "name": profile.get("name", ""),
             "native_locality": profile.get("native_locality", ""),
@@ -395,7 +532,11 @@ def login(body: LoginRequest):
 def logout(authorization: str = Header(default="")):
     if not _supabase_configured():
         return {"status": "ok"}
-    jwt = _verify_jwt(authorization)
+    # Verify the token before signing out — best effort.
+    try:
+        _verify_jwt(authorization)
+    except HTTPException:
+        return {"status": "ok"}
     try:
         token = authorization.split(" ", 1)[1].strip()
         db = _get_db()
@@ -411,15 +552,24 @@ def logout(authorization: str = Header(default="")):
 
 @app.get("/api/v1/users/me")
 def get_me(authorization: str = Header(default="")):
+    """Return the authenticated user's profile.
+
+    Verifies the bearer token server-side — never trusts a user-supplied ID.
+    """
     jwt_user = _verify_jwt(authorization)
     db = _get_db()
-    resp = (
-        db.table("users")
-        .select("id, name, email, native_locality, created_at")
-        .eq("id", jwt_user["id"])
-        .single()
-        .execute()
-    )
+    try:
+        resp = (
+            db.table("users")
+            .select("id, name, email, native_locality, created_at")
+            .eq("id", jwt_user["id"])
+            .single()
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("Profile fetch failed for %s: %s", jwt_user["id"], exc)
+        raise HTTPException(status_code=500, detail="Failed to retrieve profile")
+
     if resp is None or resp.data is None:
         raise HTTPException(status_code=404, detail="User profile not found")
     return resp.data
@@ -431,18 +581,30 @@ def get_me(authorization: str = Header(default="")):
 
 @app.get("/api/v1/rainfall-logs/{locality}")
 def get_rainfall_log(locality: str, days: int = 30, authorization: str = Header(default="")):
+    """Return the last N daily rainfall observations for a locality.
+
+    Requires a valid bearer token — rainfall history is considered user data.
+    The service-role client is used for the read so RLS is bypassed, allowing
+    the backend to return data for any locality (not just the authenticated
+    user's locality).
+    """
     _verify_jwt(authorization)
     if not _supabase_configured():
         raise HTTPException(status_code=503, detail="Database not configured")
     db = _get_db()
-    resp = (
-        db.table("rainfall_logs")
-        .select("observed_at, locality, rainfall_mm, source")
-        .ilike("locality", locality)
-        .order("observed_at", desc=True)
-        .limit(days)
-        .execute()
-    )
+    try:
+        resp = (
+            db.table("rainfall_logs")
+            .select("observed_at, locality, rainfall_mm, source")
+            .ilike("locality", locality)
+            .order("observed_at", desc=True)
+            .limit(days)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("Rainfall log fetch failed for %s: %s", locality, exc)
+        raise HTTPException(status_code=500, detail="Failed to retrieve rainfall logs")
+
     rows = resp.data or []
     rows_sorted = sorted(rows, key=lambda r: r["observed_at"])
     return {
