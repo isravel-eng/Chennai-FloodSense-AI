@@ -500,8 +500,9 @@ def login(body: LoginRequest):
 
     # Fetch application profile using service-role client (bypasses RLS)
     try:
+        service_db = _get_db()
         profile_resp = (
-            db.table("users")
+            service_db.table("users")
             .select("id, name, email, native_locality, created_at")
             .eq("id", str(resp.user.id))
             .single()

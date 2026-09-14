@@ -13,9 +13,8 @@ from functools import lru_cache
 from supabase import Client, create_client
 
 
-@lru_cache(maxsize=1)
 def get_client() -> Client:
-    """Return a cached Supabase service-role client.
+    """Return a fresh Supabase service-role client.
 
     Reads SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY from the environment.
     Raises RuntimeError with a helpful message if either variable is missing.
