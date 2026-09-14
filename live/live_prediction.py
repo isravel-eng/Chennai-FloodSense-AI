@@ -23,7 +23,7 @@ from live.forecast_7d import forecast_next_7_days
 from live.weather_api import get_weather_for_locality
 from live.rainfall_history import get_recent_rainfall, log_observation
 from live.live_features import build_current_features, build_forecast_24h_features
-from model_2_flood.predict_flood import predict_flood
+from model_2_flood.predict_flood import predict_flood, RISK_BANDS
 
 
 def predict_live_flood(locality: str) -> dict:
@@ -75,6 +75,7 @@ def predict_live_flood(locality: str) -> dict:
             "rainfall_last_30d_mm": history["rainfall_30d_mm"],
             "rainfall_history_source": history["source"],
             "is_northeast_monsoon": month in (10, 11, 12),
+            "risk_band_thresholds": {label: f"{lo:.2f} to {hi:.2f}" for lo, hi, label in RISK_BANDS},
         },
     }
 

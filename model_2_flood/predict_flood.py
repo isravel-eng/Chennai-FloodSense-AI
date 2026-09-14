@@ -4,7 +4,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 MODELS_DIR = ROOT / "models"
-RISK_BANDS = [(0.00, 0.15, "LOW"), (0.15, 0.40, "MEDIUM"), (0.40, 1.01, "HIGH")]
+RISK_BANDS = [(0.00, 0.05, "LOW"), (0.05, 0.25, "MEDIUM"), (0.25, 1.01, "HIGH")]
 _model = None
 _preprocessing = None
 

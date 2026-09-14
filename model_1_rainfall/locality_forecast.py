@@ -83,8 +83,10 @@ def load_locality_monthly(locality: str, data_path: Path = DATA_PATH) -> pd.Seri
     if subset.empty:
         raise ValueError(f"Unknown locality or no rainfall history: {locality}")
 
-    # Preserve concat order (base first, live second) so that when the same
-    # locality/date exists in both sources, the live value wins deterministically.
+    # Exclude current partial month from training
+    current_month_start = pd.Timestamp.today().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    subset = subset[subset["date"] < current_month_start]
+
     subset = subset.sort_values("date", kind="mergesort").drop_duplicates(
         subset=["date"], keep="last"
     )
@@ -118,19 +120,19 @@ def _select_model(series: pd.Series):
 
 def _current_month_start() -> pd.Timestamp:
     """Return the first day of the current calendar month."""
-    return pd.Timestamp.today().to_period("M").to_timestamp()
+    return pd.Timestamp.today().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
-def _forecast_dates(horizon_months: int) -> pd.DatetimeIndex:
-    """Build forecast labels from the current month for the requested horizon."""
+def _forecast_dates(start_date: pd.Timestamp, horizon_months: int) -> pd.DatetimeIndex:
+    """Build forecast labels from the given start date for the requested horizon."""
     return pd.date_range(
-        start=_current_month_start(),
+        start=start_date,
         periods=horizon_months,
         freq="MS",
     )
 
 
-def _fallback_forecast(observed: pd.Series, horizon_months: int) -> list[dict]:
+def _fallback_forecast(observed: pd.Series, horizon_months: int, forecast_start_ts: pd.Timestamp) -> list[dict]:
     """Forecast with a simple non-negative linear trend for short/failed histories."""
     y = observed.dropna().astype(float).to_numpy()
     x = np.arange(len(y), dtype=float)
@@ -147,7 +149,7 @@ def _fallback_forecast(observed: pd.Series, horizon_months: int) -> list[dict]:
     future_x = np.arange(len(y), len(y) + horizon_months, dtype=float)
     values = np.maximum(intercept + slope * future_x, 0.0)
     margin = max(1.96 * residual_std, 1.0)
-    dates = _forecast_dates(horizon_months)
+    dates = _forecast_dates(forecast_start_ts, horizon_months)
     return [
         {
             "month": ts.strftime("%Y-%m"),
@@ -168,13 +170,16 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
     if observed.empty:
         raise ValueError(f"Unknown locality or no rainfall history: {locality}")
 
-    # IMPORTANT: forecast labels always begin in the current calendar month.
-    # This is independent of the last historical observation used for fitting.
-    forecast_start = _current_month_start()
+    # IMPORTANT: Determine the latest complete training month and anchor forecast there
+    training_end_ts = observed.index.max()
+    forecast_start_ts = training_end_ts + pd.DateOffset(months=1)
+    forecast_start_str = forecast_start_ts.strftime("%Y-%m")
+    training_start_str = observed.index.min().strftime("%Y-%m")
+    training_end_str = training_end_ts.strftime("%Y-%m")
 
     # Short histories cannot support a reliable seasonal SARIMA fit.
     if len(observed) < MIN_MONTHS:
-        rows = _fallback_forecast(observed, horizon_months)
+        rows = _fallback_forecast(observed, horizon_months, forecast_start_ts)
         return {
             "locality": locality,
             "status": "fallback_forecast",
@@ -182,7 +187,9 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
             "observed_months": int(len(observed)),
             "first_observation": str(observed.index.min().date()),
             "last_observation": str(observed.index.max().date()),
-            "forecast_start": forecast_start.strftime("%Y-%m"),
+            "training_start": training_start_str,
+            "training_end": training_end_str,
+            "forecast_start": forecast_start_str,
             "horizon_months": horizon_months,
             "model": {"name": "Trend fallback"},
             "forecast": rows,
@@ -191,7 +198,7 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
 
     selected = _select_model(monthly)
     if selected is None:
-        rows = _fallback_forecast(observed, horizon_months)
+        rows = _fallback_forecast(observed, horizon_months, forecast_start_ts)
         return {
             "locality": locality,
             "status": "fallback_forecast",
@@ -199,7 +206,9 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
             "observed_months": int(len(observed)),
             "first_observation": str(observed.index.min().date()),
             "last_observation": str(observed.index.max().date()),
-            "forecast_start": forecast_start.strftime("%Y-%m"),
+            "training_start": training_start_str,
+            "training_end": training_end_str,
+            "forecast_start": forecast_start_str,
             "horizon_months": horizon_months,
             "model": {"name": "Trend fallback"},
             "forecast": rows,
@@ -214,9 +223,8 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
         lower = np.maximum(np.asarray(ci.iloc[:, 0], dtype=float), 0.0)
         upper = np.maximum(np.asarray(ci.iloc[:, 1], dtype=float), 0.0)
 
-        # Deliberately label the requested prediction window from the current
-        # month rather than from the final timestamp in the historical dataset.
-        dates = _forecast_dates(horizon_months)
+        # Deliberately label the requested prediction window from the month after training end
+        dates = _forecast_dates(forecast_start_ts, horizon_months)
 
         rows = [
             {
@@ -228,7 +236,7 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
             for i in range(horizon_months)
         ]
     except Exception:
-        rows = _fallback_forecast(observed, horizon_months)
+        rows = _fallback_forecast(observed, horizon_months, forecast_start_ts)
         return {
             "locality": locality,
             "status": "fallback_forecast",
@@ -236,7 +244,9 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
             "observed_months": int(len(observed)),
             "first_observation": str(observed.index.min().date()),
             "last_observation": str(observed.index.max().date()),
-            "forecast_start": forecast_start.strftime("%Y-%m"),
+            "training_start": training_start_str,
+            "training_end": training_end_str,
+            "forecast_start": forecast_start_str,
             "horizon_months": horizon_months,
             "model": {"name": "Trend fallback"},
             "forecast": rows,
@@ -250,7 +260,9 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
         "observed_months": int(len(observed)),
         "first_observation": str(observed.index.min().date()),
         "last_observation": str(observed.index.max().date()),
-        "forecast_start": forecast_start.strftime("%Y-%m"),
+        "training_start": training_start_str,
+        "training_end": training_end_str,
+        "forecast_start": forecast_start_str,
         "model": {"name": "SARIMA", "order": list(order), "seasonal_order": list(seasonal), "aic": round(aic, 2)},
         "horizon_months": horizon_months,
         "forecast": rows,
