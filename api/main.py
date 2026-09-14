@@ -407,7 +407,7 @@ def register(body: RegisterRequest):
         logger.error("Auth user creation failed for %s: %s", email, exc)
         raise HTTPException(
             status_code=422,
-            detail="Registration failed. Please check your details and try again.",
+            detail=f"Registration failed. Please check your details and try again. Error: {str(exc)}",
         )
 
     if auth_user is None:
@@ -568,7 +568,7 @@ def get_me(authorization: str = Header(default="")):
         )
     except Exception as exc:
         logger.error("Profile fetch failed for %s: %s", jwt_user["id"], exc)
-        raise HTTPException(status_code=500, detail="Failed to retrieve profile")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve profile: {str(exc)}")
 
     if resp is None or resp.data is None:
         raise HTTPException(status_code=404, detail="User profile not found")
