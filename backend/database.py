@@ -13,6 +13,7 @@ from functools import lru_cache
 from supabase import Client, create_client
 
 
+@lru_cache()
 def get_client() -> Client:
     """Return a fresh Supabase service-role client.
 

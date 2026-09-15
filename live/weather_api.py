@@ -18,12 +18,11 @@ def get_locality_coords(locality: str) -> dict:
     row = match.iloc[0]
     return {"locality": row["locality"], "latitude": float(row["latitude"]), "longitude": float(row["longitude"]), "elevation_m_approx": float(row["elevation_m_approx"])}
 
-def fetch_weather(latitude: float, longitude: float, forecast_days: int = 7) -> dict:
-    params = {"latitude": latitude, "longitude": longitude, "current": ",".join(CURRENT_VARS), "hourly": ",".join(HOURLY_VARS), "daily": ",".join(DAILY_VARS), "forecast_days": forecast_days, "timezone": "Asia/Kolkata"}
-    resp = requests.get(OPEN_METEO_URL, params=params, timeout=15)
-    resp.raise_for_status()
-    return resp.json()
+from live.weather_cache import fetch_weather_cached
 
+def fetch_weather(latitude: float, longitude: float, forecast_days: int = 7) -> dict:
+    # Deprecated: use fetch_weather_cached directly instead
+    return fetch_weather_cached(latitude, longitude, forecast_days)
 def next_24h_precipitation_mm(weather_json: dict) -> float:
     hourly = weather_json["hourly"]
     times, precip = hourly["time"], hourly["precipitation"]
@@ -44,6 +43,6 @@ def daily_forecast(weather_json: dict) -> list[dict]:
 
 def get_weather_for_locality(locality: str) -> dict:
     coords = get_locality_coords(locality)
-    raw = fetch_weather(coords["latitude"], coords["longitude"])
+    raw = fetch_weather_cached(coords["latitude"], coords["longitude"], forecast_days=7, locality=locality)
     current = raw.get("current", {})
     return {**coords, "fetched_at": current.get("time"), "current_precipitation_mm": current.get("precipitation", 0.0) or 0.0, "current_temperature_c": current.get("temperature_2m"), "current_humidity_pct": current.get("relative_humidity_2m"), "current_wind_kmh": current.get("wind_speed_10m"), "forecast_next_24h_precipitation_mm": next_24h_precipitation_mm(raw), "daily_forecast": daily_forecast(raw), "raw": raw}

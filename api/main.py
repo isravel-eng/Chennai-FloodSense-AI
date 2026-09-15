@@ -232,6 +232,8 @@ def flood_risk(locality: str):
             detail="Weather service unavailable. Check internet access and try again.",
         )
     except requests.exceptions.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 429:
+            raise HTTPException(status_code=503, detail="Weather service rate limit exceeded. Please try again later.")
         raise HTTPException(status_code=503, detail=f"Weather service request failed: {exc}")
     except KeyError as exc:
         raise HTTPException(status_code=500, detail=f"Feature mismatch: {str(exc)}")
@@ -244,8 +246,15 @@ def flood_risk_all():
     names = _known_localities()
     if not names:
         raise HTTPException(status_code=500, detail="No localities configured")
-    with ThreadPoolExecutor(max_workers=min(8, len(names))) as executor:
-        results = list(executor.map(_predict, names))
+    with ThreadPoolExecutor(max_workers=min(4, len(names))) as executor:
+        import time
+        
+        def _predict_with_delay(name: str):
+            # Stagger startup slightly to avoid hitting rate limits instantly
+            time.sleep(0.1 * names.index(name) % 4)
+            return _predict(name)
+            
+        results = list(executor.map(_predict_with_delay, names))
     ok = sum(1 for item in results if item["ok"])
     return {
         "count": len(results),
@@ -264,6 +273,17 @@ def daily_forecast(locality: str):
         "forecast_source": "Open-Meteo daily forecast",
         "days": result.get("next_7_days", []),
     }
+
+
+@app.get("/api/v1/weather/{locality}")
+def get_weather(locality: str):
+    from live.weather_api import get_weather_for_locality
+    try:
+        return get_weather_for_locality(locality)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch weather: {exc}")
 
 
 # ---------------------------------------------------------------------------

@@ -70,13 +70,13 @@ function AuthProvider({ children }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Fetch user profile whenever session changes
+  // Fetch user profile whenever session token changes
   useEffect(() => {
     if (!session?.access_token) { setProfile(null); return; }
     getJson(`${API}/users/me`, { headers: authHeaders(session.access_token) })
       .then(setProfile)
       .catch(() => setProfile(null));
-  }, [session]);
+  }, [session?.access_token]);
 
   const register = useCallback(async ({ name, email, password, native_locality }) => {
     const data = await getJson(`${API}/auth/register`, {
