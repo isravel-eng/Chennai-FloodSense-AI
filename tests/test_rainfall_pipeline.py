@@ -33,3 +33,13 @@ def test_forecast_dates_not_relabeled():
     first_forecast_month = pd.Timestamp(res["forecast"][0]["month"])
     
     assert first_forecast_month == forecast_start, "The first forecast month must equal the forecast_start"
+
+
+def test_recent_contiguous_history_is_used_for_sparse_locality():
+    result = forecast_locality("Alandur", 6)
+    assert result["status"] == "ok"
+    assert result["horizon_months"] == 6
+    assert result["observed_months"] >= 24
+    assert result["training_start"] >= "2024-01"
+    assert result["training_end"] < pd.Timestamp.today().strftime("%Y-%m")
+    assert len(result["forecast"]) == 6
