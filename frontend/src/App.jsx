@@ -797,7 +797,7 @@ function AppShell({ localities }) {
     setLoadingRisk(true);
     setRiskError('');
     try {
-      setRisk(await getCachedJson(`${API}/flood-risk/${encodeURIComponent(name)},
+      setRisk(await getCachedJson(`${API}/flood-risk/${encodeURIComponent(name)}`,
         `cfs:risk:${name.toLowerCase()}`,
         CLIENT_CACHE_TTL.localityRisk
       ));
