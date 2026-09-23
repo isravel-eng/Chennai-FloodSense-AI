@@ -252,7 +252,7 @@
   height:125px;
   object-fit:contain;
 }
-.page,.mapPage{animation:cfsPageIn .18s ease-out}@keyframes cfsPageIn{from{opacity:.72;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}.compactChart .recharts-wrapper{overflow:visible!important}
+.page,.mapPage{animation:cfsPageIn .18s ease-out}@keyframes cfsPageIn{from{opacity:.72;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
 .chartTitleRow{
   display:flex;
   align-items:center;
@@ -273,4 +273,41 @@
   display:block;
   margin-top:3px;
   line-height:1.25;
+}
+
+/* External SVG axis titles keep chart orientation and spacing stable. */
+.chartWithYAxis{
+  display:grid;
+  grid-template-columns:30px minmax(0,1fr);
+  align-items:stretch;
+  width:100%;
+}
+.chartYAxisTitle{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  writing-mode:vertical-rl;
+  transform:rotate(180deg);
+  white-space:nowrap;
+  font-size:12px;
+  line-height:1;
+  color:#7b8794;
+}
+.chartPlot{
+  width:100%;
+  min-width:0;
+  overflow:visible;
+}
+.compactChartAxes{
+  grid-template-columns:26px minmax(0,1fr);
+  margin-top:2px;
+}
+.compactChartAxes .chartYAxisTitle{font-size:10.5px}
+.forecastChartAxes{
+  grid-template-columns:34px minmax(0,1fr);
+  margin-top:4px;
+}
+.forecastChartAxes .chartYAxisTitle{font-size:12px}
+@media(max-width:900px){
+  .chartWithYAxis{grid-template-columns:26px minmax(0,1fr)}
 }

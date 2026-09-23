@@ -446,15 +446,20 @@ function MapPage({ localities, selected, setSelected, risk, loading, error, onRe
 
           <div className="chartCard compactChart">
             <div className="cardTitle chartTitleRow"><span>Next 7 Days · Rainfall</span><small>Rainfall (mm)</small></div>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={chart7} margin={{ top: 8, right: 12, left: 66, bottom: 24 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="shortDate" label={{ value: 'Date', position: 'insideBottom', offset: -16 }} />
-                <YAxis width={60} label={{ value: 'Rainfall (mm)', angle: -90, position: 'insideLeft', offset: 8 }} />
-                <Tooltip formatter={(value) => formatRainfall(value)} />
-                <Bar dataKey="rainfall_mm" name="Rainfall (mm)" fill="#1976d2" radius={[5, 5, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="chartWithYAxis compactChartAxes">
+              <div className="chartYAxisTitle" aria-hidden="true">Rainfall (mm)</div>
+              <div className="chartPlot">
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={chart7} margin={{ top: 8, right: 8, left: 8, bottom: 30 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="shortDate" label={{ value: 'Date', position: 'insideBottom', offset: -20 }} />
+                    <YAxis width={36} />
+                    <Tooltip formatter={(value) => formatRainfall(value)} />
+                    <Bar dataKey="rainfall_mm" name="Rainfall (mm)" fill="#1976d2" radius={[5, 5, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
             <div className="forecastRows">
               {chart7.map(d => (
                 <div className="forecastRow" key={d.date}>
@@ -768,16 +773,21 @@ function RainfallPage({ localities, selected, setSelected }) {
       {chart.length > 0 && <>
         <div className="chartCard">
           <div className="cardTitle">{data?.model?.name || 'Rainfall'} Forecast · {displayLocalityName(selected, localities)} · {months} months</div>
-          <ResponsiveContainer width="100%" height={380}>
-            <LineChart data={chart} margin={{ top: 32, right: 20, left: 66, bottom: 36 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" interval={months > 18 ? 2 : 0} label={{ value: 'Month', position: 'insideBottom', offset: -22 }} />
-              <YAxis width={60} label={{ value: 'Rainfall (mm)', angle: -90, position: 'insideLeft', offset: 8 }} />
-              <Tooltip formatter={(value) => formatRainfall(value)} />
-              <Legend verticalAlign="top" height={24} />
-              <Line type="monotone" dataKey="forecast_mm" name="Predicted rainfall" stroke="#1976d2" strokeWidth={3} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+          <div className="chartWithYAxis forecastChartAxes">
+            <div className="chartYAxisTitle" aria-hidden="true">Rainfall (mm)</div>
+            <div className="chartPlot">
+              <ResponsiveContainer width="100%" height={380}>
+                <LineChart data={chart} margin={{ top: 34, right: 20, left: 8, bottom: 48 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" interval={months > 18 ? 2 : 0} label={{ value: 'Month', position: 'insideBottom', offset: -28 }} />
+                  <YAxis width={44} />
+                  <Tooltip formatter={(value) => formatRainfall(value)} />
+                  <Legend verticalAlign="top" height={24} />
+                  <Line type="monotone" dataKey="forecast_mm" name="Predicted rainfall" stroke="#1976d2" strokeWidth={3} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
           <div className="forecastNote">
             Predicted rainfall is shown in millimetres (mm) for each forecast month.
           </div>
