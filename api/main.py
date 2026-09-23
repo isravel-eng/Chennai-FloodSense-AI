@@ -93,12 +93,16 @@ app = FastAPI(title="Chennai FloodSense AI API")
 # CORS: tighten in production by setting FRONTEND_ORIGIN env var.
 # In local dev, leaving FRONTEND_ORIGIN unset (or "*") allows any origin.
 # In production on Render: FRONTEND_ORIGIN=https://chennai-floodsense-ai-1.onrender.com
-_allowed_origins_raw = os.environ.get("FRONTEND_ORIGIN", "*")
-_allowed_origins = (
-    ["*"]
-    if _allowed_origins_raw.strip() == "*"
-    else [o.strip() for o in _allowed_origins_raw.split(",") if o.strip()]
-)
+_configured_origins = [
+    o.strip().rstrip("/")
+    for o in os.environ.get("FRONTEND_ORIGIN", "").split(",")
+    if o.strip()
+]
+_allowed_origins = list(dict.fromkeys(_configured_origins + [
+    "https://chennai-floodsense-ai-1.onrender.com",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]))
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -309,8 +313,8 @@ def get_weather(locality: str):
 
 @app.get("/api/v1/rainfall-forecast/locality/{locality}")
 def locality_rainfall_forecast(locality: str, months: int = 12):
-    if months not in (12, 24, 36):
-        raise HTTPException(status_code=422, detail="months must be 12, 24, or 36")
+    if months not in (6, 12, 24, 36):
+        raise HTTPException(status_code=422, detail="months must be 6, 12, 24, or 36")
     canonical = _canonical_locality(locality)
     if canonical is None:
         raise HTTPException(status_code=404, detail=f"Unknown locality: {locality}")
