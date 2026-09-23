@@ -157,3 +157,98 @@
   .infoCard{padding:22px 18px}
   .profileHeroLogo{width:135px;height:135px}
 }
+
+
+/* Profile editing, success state and clearer logo sizing */
+.successBox{
+  margin:12px 0;
+  padding:13px 14px;
+  border-radius:11px;
+  background:#eef8f2;
+  border:1px solid #cce5d7;
+  color:#197246;
+  font-size:13px;
+}
+.profileEditButton{
+  width:100%;
+  margin-top:18px;
+}
+.profileEditForm{
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+}
+.profileField{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.profileField label{
+  font-size:10px;
+  letter-spacing:.07em;
+  font-weight:850;
+  color:#8a99ab;
+}
+.profileField input,
+.profileField select{
+  width:100%;
+  padding:12px 13px;
+  border:1.5px solid #d5dee7;
+  border-radius:10px;
+  font-size:15px;
+  color:#102033;
+  background:#fff;
+  outline:none;
+}
+.profileField input:focus,
+.profileField select:focus{
+  border-color:#1976d2;
+  box-shadow:0 0 0 3px rgba(25,118,210,.1);
+}
+.profileField input:disabled{
+  background:#f5f7f9;
+  color:#7a8fa3;
+  cursor:not-allowed;
+}
+.profileField small{
+  color:#8a98a5;
+  font-size:11px;
+}
+.profileEditActions{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+  margin-top:4px;
+}
+.secondary{
+  background:#fff;
+  color:#536576;
+  border:1px solid #d5dee7;
+  border-radius:9px;
+  padding:11px 16px;
+  font-weight:750;
+  cursor:pointer;
+}
+.secondary:disabled{opacity:.6;cursor:not-allowed}
+
+/* Keep the high-resolution source sharp without over-scaling it. */
+.headerLogo{
+  width:46px;
+  height:46px;
+  object-fit:contain;
+}
+.authHeroLogo{
+  width:112px;
+  height:112px;
+  object-fit:contain;
+}
+.infoHeroLogo{
+  width:78px;
+  height:78px;
+  object-fit:contain;
+}
+.profileHeroLogo{
+  width:125px;
+  height:125px;
+  object-fit:contain;
+}

@@ -144,8 +144,30 @@ function AuthProvider({ children }) {
     } catch { /* best-effort */ }
   }, [session]);
 
+  const updateProfile = useCallback(async ({ name, native_locality }) => {
+    if (!supabase) throw new Error('Profile service is not configured.');
+    const userId = session?.user?.id || profile?.id;
+    if (!userId) throw new Error('Your session is missing a user ID.');
+
+    const cleanName = String(name || '').trim();
+    const cleanLocality = String(native_locality || '').trim();
+    if (!cleanName) throw new Error('Name is required.');
+    if (!cleanLocality) throw new Error('Native locality is required.');
+
+    const { data, error } = await supabase
+      .from('users')
+      .update({ name: cleanName, native_locality: cleanLocality })
+      .eq('id', userId)
+      .select('id, name, email, native_locality, created_at')
+      .single();
+
+    if (error) throw new Error(error.message || 'Failed to update profile.');
+    setProfile(data);
+    return data;
+  }, [session?.user?.id, profile?.id]);
+
   return (
-    <AuthContext.Provider value={{ session, profile, register, login, logout, loading: session === undefined }}>
+    <AuthContext.Provider value={{ session, profile, register, login, logout, updateProfile, loading: session === undefined }}>
       {children}
     </AuthContext.Provider>
   );
@@ -385,10 +407,10 @@ function MapPage({ localities, selected, setSelected, risk, loading, error, onRe
           <div className="chartCard compactChart">
             <div className="cardTitle">Next 7 Days · Rainfall</div>
             <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={chart7}>
+              <BarChart data={chart7} margin={{ top: 8, right: 12, left: 22, bottom: 18 }}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="shortDate" />
-                <YAxis />
+                <XAxis dataKey="shortDate" label={{ value: 'Date', position: 'insideBottom', offset: -10 }} />
+                <YAxis label={{ value: 'Rainfall (mm)', angle: -90, position: 'insideLeft', offset: -8 }} />
                 <Tooltip formatter={(value) => formatRainfall(value)} />
                 <Bar dataKey="rainfall_mm" name="Rainfall (mm)" fill="#1976d2" radius={[5, 5, 0, 0]} />
               </BarChart>
@@ -540,23 +562,108 @@ function AboutPage({ risk, selected }) {
 // ---------------------------------------------------------------------------
 // User profile page
 // ---------------------------------------------------------------------------
-function ProfilePage({ profile, session }) {
+function ProfilePage({ profile, session, localities }) {
+  const { updateProfile } = useAuth();
   const email = profile?.email || session?.user?.email || '—';
-  const name = profile?.name || session?.user?.user_metadata?.name || (email.includes('@') ? email.split('@')[0] : 'User');
-  const nativeLocality = profile?.native_locality || 'Not set';
+  const defaultName = profile?.name || session?.user?.user_metadata?.name || (email.includes('@') ? email.split('@')[0] : 'User');
+  const defaultLocality = profile?.native_locality || '';
+
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(defaultName);
+  const [nativeLocality, setNativeLocality] = useState(defaultLocality);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setName(defaultName);
+    setNativeLocality(defaultLocality);
+  }, [defaultName, defaultLocality]);
+
+  function startEditing() {
+    setMessage('');
+    setError('');
+    setName(defaultName);
+    setNativeLocality(defaultLocality);
+    setEditing(true);
+  }
+
+  function cancelEditing() {
+    setMessage('');
+    setError('');
+    setName(defaultName);
+    setNativeLocality(defaultLocality);
+    setEditing(false);
+  }
+
+  async function saveProfile(e) {
+    e.preventDefault();
+    setSaving(true);
+    setMessage('');
+    setError('');
+    try {
+      await updateProfile({ name, native_locality: nativeLocality });
+      setMessage('Profile updated successfully.');
+      setEditing(false);
+    } catch (err) {
+      setError(err.message || 'Unable to update profile.');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <main className="page profilePage">
       <div className="profileHero">
         <img className="profileHeroLogo" src={CFS_LOGO} alt="Chennai FloodSense AI logo" />
-        <h1>{name}</h1>
+        <h1>{defaultName}</h1>
         <p>Chennai FloodSense AI user profile</p>
       </div>
 
       <div className="profileCard">
-        <div className="profileRow"><span>NAME</span><strong>{name}</strong></div>
-        <div className="profileRow"><span>EMAIL</span><strong>{email}</strong></div>
-        <div className="profileRow"><span>NATIVE LOCALITY</span><strong>{nativeLocality}</strong></div>
+        {!editing ? (
+          <>
+            <div className="profileRow"><span>NAME</span><strong>{defaultName}</strong></div>
+            <div className="profileRow"><span>EMAIL</span><strong>{email}</strong></div>
+            <div className="profileRow"><span>NATIVE LOCALITY</span><strong>{defaultLocality || 'Not set'}</strong></div>
+            {message && <div className="successBox">{message}</div>}
+            {error && <div className="errorBox">{error}</div>}
+            <button className="primary profileEditButton" type="button" onClick={startEditing} id="profile-edit-btn">
+              Edit Profile
+            </button>
+          </>
+        ) : (
+          <form className="profileEditForm" onSubmit={saveProfile}>
+            <div className="profileField">
+              <label htmlFor="profile-name">NAME</label>
+              <input id="profile-name" value={name} onChange={e => setName(e.target.value)} maxLength={80} required />
+            </div>
+
+            <div className="profileField">
+              <label htmlFor="profile-email">EMAIL</label>
+              <input id="profile-email" value={email} disabled />
+              <small>Email cannot be changed here.</small>
+            </div>
+
+            <div className="profileField">
+              <label htmlFor="profile-locality">NATIVE LOCALITY</label>
+              <select id="profile-locality" value={nativeLocality} onChange={e => setNativeLocality(e.target.value)} required>
+                <option value="">Select your locality…</option>
+                {localities.map(x => <option key={x.name} value={x.name}>{x.name}</option>)}
+              </select>
+            </div>
+
+            {error && <div className="errorBox">{error}</div>}
+            <div className="profileEditActions">
+              <button className="primary" type="submit" disabled={saving} id="profile-save-btn">
+                {saving ? 'Saving…' : 'Save Changes'}
+              </button>
+              <button className="secondary" type="button" onClick={cancelEditing} disabled={saving} id="profile-cancel-btn">
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </main>
   );
@@ -586,7 +693,7 @@ function RainfallPage({ localities, selected, setSelected }) {
     <main className="page">
       <div className="eyebrow">RAINFALL FORECASTING</div>
       <h1>Rainfall Prediction</h1>
-      <p className="subtitle">Locality-specific rainfall forecasting with a clear trend graph.</p>
+      <p className="subtitle">Locality-specific monthly rainfall forecasting using seasonal SARIMA.</p>
       <div className="controlCard">
         <div>
           <label>LOCALITY</label>
@@ -615,31 +722,18 @@ function RainfallPage({ localities, selected, setSelected }) {
         <div className="chartCard">
           <div className="cardTitle">{data?.model?.name || 'Rainfall'} Forecast · {selected} · {months} months</div>
           <ResponsiveContainer width="100%" height={380}>
-            <LineChart data={chart}>
+            <LineChart data={chart} margin={{ top: 10, right: 20, left: 28, bottom: 22 }}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" interval={months > 18 ? 2 : 0} />
-              <YAxis />
+              <XAxis dataKey="month" interval={months > 18 ? 2 : 0} label={{ value: 'Month', position: 'insideBottom', offset: -12 }} />
+              <YAxis label={{ value: 'Rainfall (mm)', angle: -90, position: 'insideLeft', offset: -12 }} />
               <Tooltip formatter={(value) => formatRainfall(value)} />
               <Legend />
               <Line type="monotone" dataKey="forecast_mm" name="Predicted rainfall" stroke="#1976d2" strokeWidth={3} dot={false} />
             </LineChart>
           </ResponsiveContainer>
           <div className="forecastNote">
-            Predicted rainfall is shown as the primary forecast trend. Confidence bounds are retained in the table and are not plotted.
+            Predicted rainfall is shown in millimetres (mm) for each forecast month.
           </div>
-        </div>
-        <div className="table">
-          <div className="thead forecastGrid">
-            <span>MONTH</span><span>PREDICTED RAINFALL</span><span>LOWER BOUND</span><span>UPPER BOUND</span>
-          </div>
-          {chart.map(x => (
-            <div className="tr static forecastGrid" key={x.month}>
-              <span>{x.month}</span>
-              <span>{formatRainfall(x.forecast_mm)}</span>
-              <span>{formatRainfall(x.lower_95_mm)}</span>
-              <span>{formatRainfall(x.upper_95_mm)}</span>
-            </div>
-          ))}
         </div>
       </>}
     </main>
@@ -720,7 +814,7 @@ function AppShell({ localities }) {
       {page === 'localities' && <LocalitiesPage localities={localities} onOpen={openLocality} />}
       {page === 'rainfall' && <RainfallPage localities={localities} selected={selected} setSelected={setSelected} />}
       {page === 'about' && <AboutPage risk={risk} selected={selected} />}
-      {page === 'profile' && <ProfilePage profile={profile} session={session} />}
+      {page === 'profile' && <ProfilePage profile={profile} session={session} localities={localities} />}
     </div>
   );
 }
