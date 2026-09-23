@@ -1,19 +1,16 @@
 """Live flood prediction pipeline for Chennai FloodSense AI.
 
-Orchestrates:
-  1. Live weather fetch (Open-Meteo)
-  2. Rainfall observation persistence (PostgreSQL or CSV)
-  3. Recent rainfall history retrieval (PostgreSQL or CSV + climatology fallback)
-  4. Feature engineering
-  5. Flood model inference (current + 24h forecast + 7-day forecast)
-  6. Response assembly
-
-The return dict shape is unchanged so all existing API endpoints continue
-to work without modification.
+Pipeline:
+1. Fetch current + 7-day weather from WeatherAPI.com.
+2. Persist the current rainfall observation into PostgreSQL/CSV.
+3. Read recent rainfall history.
+4. Build ML features.
+5. Run flood-risk inference.
+6. Assemble current, 24-hour, and 7-day results.
 """
 
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -27,12 +24,8 @@ from model_2_flood.predict_flood import predict_flood, RISK_BANDS
 
 
 def predict_live_flood(locality: str) -> dict:
-    """Run the full live flood prediction pipeline for a single locality.
-
-    After fetching weather, today's current precipitation is persisted so the
-    rainfall log grows automatically with each prediction request.
-    """
     weather = get_weather_for_locality(locality)
+
     location = {
         "latitude": weather["latitude"],
         "longitude": weather["longitude"],
@@ -40,15 +33,20 @@ def predict_live_flood(locality: str) -> dict:
     }
     month = datetime.now().month
 
-    # Persist today's current precipitation observation.
-    # This is fire-and-forget: a DB failure must not break the prediction.
+    try:
+        observation_day = date.fromisoformat(weather["observation_date"])
+    except Exception:
+        observation_day = date.today()
+
     try:
         log_observation(
             locality=weather["locality"],
             rainfall_mm=float(weather.get("current_precipitation_mm") or 0.0),
+            day=observation_day,
+            source=weather.get("weather_source", "weatherapi"),
         )
     except Exception:
-        pass  # non-fatal — prediction continues with whatever history exists
+        pass
 
     history = get_recent_rainfall(locality, month=month)
     current_features = build_current_features(weather, history, location, month)
@@ -59,6 +57,7 @@ def predict_live_flood(locality: str) -> dict:
     return {
         "locality": weather["locality"],
         "updated_at": weather["fetched_at"],
+        "weather_source": weather.get("weather_source", "weatherapi"),
         "current": {
             "rainfall_input_mm": current_features["rainfall_mm"],
             "probability": current_result["probability"],
@@ -75,7 +74,9 @@ def predict_live_flood(locality: str) -> dict:
             "rainfall_last_30d_mm": history["rainfall_30d_mm"],
             "rainfall_history_source": history["source"],
             "is_northeast_monsoon": month in (10, 11, 12),
-            "risk_band_thresholds": {label: f"{lo:.2f} to {hi:.2f}" for lo, hi, label in RISK_BANDS},
+            "risk_band_thresholds": {
+                label: f"{lo:.2f} to {hi:.2f}" for lo, hi, label in RISK_BANDS
+            },
         },
     }
 
