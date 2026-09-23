@@ -10,6 +10,7 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, R
 const API = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api/v1';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const CFS_LOGO = "/cfs-logo.webp";
 
 // Supabase client (anon key only — safe in browser)
 const supabase = SUPABASE_URL && SUPABASE_ANON_KEY
@@ -170,7 +171,7 @@ function AuthPage({ localities }) {
     <div className="authPage">
       <div className="authCard">
         <div className="authBrand">
-          <span className="brandMark">⌁</span>
+          <img className="brandLogo" src={CFS_LOGO} alt="Chennai FloodSense AI logo" style={{ width: 34, height: 34, objectFit: 'contain', flexShrink: 0 }} />
           <span>Chennai <b>FloodSense AI</b></span>
         </div>
         <p className="authTagline">Live flood monitoring for Chennai's Northeast Monsoon season</p>
@@ -606,7 +607,7 @@ function AppShell({ localities }) {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span className="brandMark">⌁</span>
+          <img className="brandLogo" src={CFS_LOGO} alt="Chennai FloodSense AI logo" style={{ width: 34, height: 34, objectFit: 'contain', flexShrink: 0 }} />
           <span>Chennai <b>FloodSense AI</b></span>
         </div>
         <nav>
@@ -648,7 +649,7 @@ export default function App() {
     return (
       <div className="authPage">
         <div className="authCard">
-          <div className="authBrand"><span className="brandMark">⌁</span> <span>Chennai <b>FloodSense AI</b></span></div>
+          <div className="authBrand"><img className="brandLogo" src={CFS_LOGO} alt="Chennai FloodSense AI logo" style={{ width: 34, height: 34, objectFit: 'contain', flexShrink: 0 }} /> <span>Chennai <b>FloodSense AI</b></span></div>
           <div className="loadingBox" style={{ marginTop: 24 }}>Checking session…</div>
         </div>
       </div>
