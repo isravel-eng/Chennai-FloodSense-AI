@@ -722,7 +722,7 @@ function ProfilePage({ profile, session, localities }) {
 // Rainfall forecast page
 // ---------------------------------------------------------------------------
 function RainfallPage({ localities, selected, setSelected }) {
-  const [months, setMonths] = useState(12);
+  const [months, setMonths] = useState(6);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -756,13 +756,14 @@ function RainfallPage({ localities, selected, setSelected }) {
         <div>
           <label>HORIZON</label>
           <select value={months} onChange={e => setMonths(Number(e.target.value))} id="rf-horizon-select">
+            <option value={6}>6 months</option>
             <option value={12}>12 months</option>
             <option value={24}>24 months</option>
             <option value={36}>36 months</option>
           </select>
         </div>
         <button className="primary" onClick={generate} disabled={loading} id="rf-generate-btn">
-          {loading ? 'Generating…' : 'Generate Forecast'}
+          {loading ? 'Generating SARIMA…' : 'Generate Forecast'}
         </button>
       </div>
       {error && <div className="errorBox">{error}</div>}
