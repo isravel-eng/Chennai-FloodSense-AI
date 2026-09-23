@@ -49,6 +49,7 @@ from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from statsmodels.tsa.statespace.sarimax import SARIMAXResults
+from time import monotonic
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -61,6 +62,27 @@ LOOKUP_PATH = ROOT / "data" / "processed" / "locality_lookup.csv"
 RAINFALL_MODEL_PATH = ROOT / "models" / "rainfall_model.pkl"
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Lightweight in-process caches
+# ---------------------------------------------------------------------------
+_FLOOD_CACHE_TTL_SECONDS = 10 * 60
+_FLOOD_ALL_CACHE_TTL_SECONDS = 5 * 60
+_RAINFALL_CACHE_TTL_SECONDS = 60 * 60
+_flood_cache: dict[str, tuple[float, dict]] = {}
+_flood_all_cache: tuple[float, dict] | None = None
+_rainfall_cache: dict[tuple[str, int], tuple[float, dict]] = {}
+
+def _cached_flood(name: str):
+    key = _canonical_locality(name) or name
+    now = monotonic()
+    hit = _flood_cache.get(key)
+    if hit and now - hit[0] < _FLOOD_CACHE_TTL_SECONDS:
+        return hit[1]
+    value = predict_live_flood(key)
+    _flood_cache[key] = (now, value)
+    return value
+
 
 # ---------------------------------------------------------------------------
 # FastAPI app setup
@@ -215,7 +237,7 @@ def get_localities():
 
 def _predict(name: str):
     try:
-        return {"name": name, "ok": True, "data": predict_live_flood(name)}
+        return {"name": name, "ok": True, "data": _cached_flood(name)}
     except Exception as exc:
         return {"name": name, "ok": False, "error": str(exc)}
 
@@ -223,7 +245,7 @@ def _predict(name: str):
 @app.get("/api/v1/flood-risk/{locality}")
 def flood_risk(locality: str):
     try:
-        return predict_live_flood(locality)
+        return _cached_flood(locality)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
@@ -243,25 +265,19 @@ def flood_risk(locality: str):
 
 @app.get("/api/v1/flood-risk-all")
 def flood_risk_all():
+    global _flood_all_cache
     names = _known_localities()
     if not names:
         raise HTTPException(status_code=500, detail="No localities configured")
+    now = monotonic()
+    if _flood_all_cache and now - _flood_all_cache[0] < _FLOOD_ALL_CACHE_TTL_SECONDS:
+        return _flood_all_cache[1]
     with ThreadPoolExecutor(max_workers=min(4, len(names))) as executor:
-        import time
-        
-        def _predict_with_delay(name: str):
-            # Stagger startup slightly to avoid hitting rate limits instantly
-            time.sleep(0.1 * names.index(name) % 4)
-            return _predict(name)
-            
-        results = list(executor.map(_predict_with_delay, names))
+        results = list(executor.map(_predict, names))
     ok = sum(1 for item in results if item["ok"])
-    return {
-        "count": len(results),
-        "successful": ok,
-        "failed": len(results) - ok,
-        "results": results,
-    }
+    payload = {"count": len(results), "successful": ok, "failed": len(results) - ok, "results": results}
+    _flood_all_cache = (now, payload)
+    return payload
 
 
 @app.get("/api/v1/daily-forecast/{locality}")
@@ -294,8 +310,18 @@ def get_weather(locality: str):
 def locality_rainfall_forecast(locality: str, months: int = 12):
     if months not in (12, 24, 36):
         raise HTTPException(status_code=422, detail="months must be 12, 24, or 36")
+    canonical = _canonical_locality(locality)
+    if canonical is None:
+        raise HTTPException(status_code=404, detail=f"Unknown locality: {locality}")
+    key = (canonical.lower(), months)
+    now = monotonic()
+    hit = _rainfall_cache.get(key)
+    if hit and now - hit[0] < _RAINFALL_CACHE_TTL_SECONDS:
+        return hit[1]
     try:
-        return forecast_locality(locality, months)
+        payload = forecast_locality(canonical, months)
+        _rainfall_cache[key] = (now, payload)
+        return payload
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:

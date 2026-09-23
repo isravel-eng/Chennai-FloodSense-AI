@@ -252,3 +252,4 @@
   height:125px;
   object-fit:contain;
 }
+.page,.mapPage{animation:cfsPageIn .18s ease-out}@keyframes cfsPageIn{from{opacity:.72;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}.compactChart .recharts-wrapper{overflow:visible!important}

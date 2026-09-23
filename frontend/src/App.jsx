@@ -37,6 +37,37 @@ function formatRainfall(value) {
   return `${trimmed} mm`;
 }
 
+const CLIENT_CACHE_TTL = {
+  localities: 24 * 60 * 60 * 1000,
+  localityRisk: 5 * 60 * 1000,
+  localityForecast: 60 * 60 * 1000,
+};
+
+function readClientCache(key, ttl) {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const item = JSON.parse(raw);
+    if (!item || Date.now() - item.time > ttl) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return item.value;
+  } catch { return null; }
+}
+
+function writeClientCache(key, value) {
+  try { sessionStorage.setItem(key, JSON.stringify({ time: Date.now(), value })); } catch {}
+  return value;
+}
+
+async function getCachedJson(url, key, ttl, options = {}) {
+  const cached = readClientCache(key, ttl);
+  if (cached !== null) return cached;
+  const value = await getJson(url, options);
+  return writeClientCache(key, value);
+}
+
 async function getJson(url, options = {}) {
   const response = await fetch(url, options);
   let payload = null;
@@ -407,10 +438,10 @@ function MapPage({ localities, selected, setSelected, risk, loading, error, onRe
           <div className="chartCard compactChart">
             <div className="cardTitle">Next 7 Days · Rainfall</div>
             <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={chart7} margin={{ top: 8, right: 12, left: 22, bottom: 18 }}>
+              <BarChart data={chart7} margin={{ top: 8, right: 12, left: 42, bottom: 22 }}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="shortDate" label={{ value: 'Date', position: 'insideBottom', offset: -10 }} />
-                <YAxis label={{ value: 'Rainfall (mm)', angle: -90, position: 'insideLeft', offset: -8 }} />
+                <XAxis dataKey="shortDate" label={{ value: 'Date', position: 'insideBottom', offset: -12 }} />
+                <YAxis width={42} label={{ value: 'Rainfall (mm)', angle: -90, position: 'insideLeft', offset: 2 }} />
                 <Tooltip formatter={(value) => formatRainfall(value)} />
                 <Bar dataKey="rainfall_mm" name="Rainfall (mm)" fill="#1976d2" radius={[5, 5, 0, 0]} />
               </BarChart>
@@ -453,7 +484,7 @@ function LocalitiesPage({ localities, onOpen }) {
   useEffect(() => {
     let active = true;
     setLoading(true);
-    getJson(`${API}/flood-risk-all`)
+    getCachedJson(`${API}/flood-risk-all`, 'cfs:flood-risk-all', CLIENT_CACHE_TTL.localityRisk)
       .then(data => {
         if (!active) return;
         const next = {};
@@ -681,7 +712,10 @@ function RainfallPage({ localities, selected, setSelected }) {
   async function generate() {
     if (!selected) return;
     setLoading(true); setError('');
-    try { setData(await getJson(`${API}/rainfall-forecast/locality/${encodeURIComponent(selected)}?months=${months}`)); }
+    try { setData(await getCachedJson(`${API}/rainfall-forecast/locality/${encodeURIComponent(selected)}?months=${months}`,
+        `cfs:rainfall:${selected.toLowerCase()}:${months}`,
+        CLIENT_CACHE_TTL.localityForecast
+      )); }
     catch (err) { setData(null); setError(err.message); }
     finally { setLoading(false); }
   }
@@ -722,10 +756,10 @@ function RainfallPage({ localities, selected, setSelected }) {
         <div className="chartCard">
           <div className="cardTitle">{data?.model?.name || 'Rainfall'} Forecast · {selected} · {months} months</div>
           <ResponsiveContainer width="100%" height={380}>
-            <LineChart data={chart} margin={{ top: 10, right: 20, left: 28, bottom: 22 }}>
+            <LineChart data={chart} margin={{ top: 10, right: 20, left: 48, bottom: 26 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="month" interval={months > 18 ? 2 : 0} label={{ value: 'Month', position: 'insideBottom', offset: -12 }} />
-              <YAxis label={{ value: 'Rainfall (mm)', angle: -90, position: 'insideLeft', offset: -12 }} />
+              <YAxis width={48} label={{ value: 'Rainfall (mm)', angle: -90, position: 'insideLeft', offset: 4 }} />
               <Tooltip formatter={(value) => formatRainfall(value)} />
               <Legend />
               <Line type="monotone" dataKey="forecast_mm" name="Predicted rainfall" stroke="#1976d2" strokeWidth={3} dot={false} />
@@ -763,7 +797,10 @@ function AppShell({ localities }) {
     setLoadingRisk(true);
     setRiskError('');
     try {
-      setRisk(await getJson(`${API}/flood-risk/${encodeURIComponent(name)}`));
+      setRisk(await getCachedJson(`${API}/flood-risk/${encodeURIComponent(name)},
+        `cfs:risk:${name.toLowerCase()}`,
+        CLIENT_CACHE_TTL.localityRisk
+      ));
     } catch (err) {
       setRisk(null);
       setRiskError(err.message);
@@ -828,7 +865,7 @@ export default function App() {
   const [localitiesError, setLocalitiesError] = useState('');
 
   useEffect(() => {
-    getJson(`${API}/localities`)
+    getCachedJson(`${API}/localities`, 'cfs:localities', CLIENT_CACHE_TTL.localities)
       .then(data => setLocalities(data.localities || []))
       .catch(err => setLocalitiesError(err.message));
   }, []);
