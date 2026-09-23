@@ -133,23 +133,38 @@ def _forecast_dates(start_date: pd.Timestamp, horizon_months: int) -> pd.Datetim
 
 
 def _fallback_forecast(observed: pd.Series, horizon_months: int, forecast_start_ts: pd.Timestamp) -> list[dict]:
-    """Forecast with a simple non-negative linear trend for short/failed histories."""
-    y = observed.dropna().astype(float).to_numpy()
-    x = np.arange(len(y), dtype=float)
-    if len(y) == 1:
-        slope, intercept = 0.0, y[0]
-    else:
-        slope, intercept = np.polyfit(x, y, 1)
-    fitted = intercept + slope * x
-    residual_std = (
-        float(np.std(y - fitted, ddof=1))
-        if len(y) > 2
-        else max(float(np.mean(y)) * 0.25, 1.0)
-    )
-    future_x = np.arange(len(y), len(y) + horizon_months, dtype=float)
-    values = np.maximum(intercept + slope * future_x, 0.0)
-    margin = max(1.96 * residual_std, 1.0)
+    """Seasonal month-of-year fallback for rainfall data.
+
+    Uses historical rainfall grouped by calendar month. A recent-level
+    adjustment keeps the forecast tied to recent observations without forcing
+    an artificial linear trend.
+    """
+    s = observed.dropna().astype(float)
+    if s.empty:
+        raise ValueError("No rainfall history available")
+
+    monthly_median = s.groupby(s.index.month).median()
+    overall = float(s.median())
+    recent = s.tail(min(24, len(s)))
+    recent_median = float(recent.median()) if len(recent) else overall
+    level_ratio = 1.0 if overall <= 0 else float(np.clip(recent_median / overall, 0.85, 1.15))
+
     dates = _forecast_dates(forecast_start_ts, horizon_months)
+    values = [
+        max(float(monthly_median.get(ts.month, overall)) * level_ratio, 0.0)
+        for ts in dates
+    ]
+
+    fitted = np.array(
+        [float(monthly_median.get(ts.month, overall)) for ts in s.index],
+        dtype=float,
+    )
+    residuals = s.to_numpy(dtype=float) - fitted
+    residual_scale = float(np.median(np.abs(residuals - np.median(residuals)))) if len(residuals) else 0.0
+    if residual_scale <= 0:
+        residual_scale = max(float(np.std(residuals)), 1.0)
+    margin = max(1.96 * residual_scale, 1.0)
+
     return [
         {
             "month": ts.strftime("%Y-%m"),
@@ -159,7 +174,6 @@ def _fallback_forecast(observed: pd.Series, horizon_months: int, forecast_start_
         }
         for i, ts in enumerate(dates)
     ]
-
 
 def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path = DATA_PATH) -> dict:
     if horizon_months not in (12, 24, 36):
@@ -183,7 +197,7 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
         return {
             "locality": locality,
             "status": "fallback_forecast",
-            "message": "Limited historical data; showing a simple trend forecast",
+            "message": "SARIMA unavailable; showing a seasonal rainfall baseline from historical monthly patterns",
             "observed_months": int(len(observed)),
             "first_observation": str(observed.index.min().date()),
             "last_observation": str(observed.index.max().date()),
@@ -191,7 +205,7 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
             "training_end": training_end_str,
             "forecast_start": forecast_start_str,
             "horizon_months": horizon_months,
-            "model": {"name": "Trend fallback"},
+            "model": {"name": "Seasonal rainfall baseline"},
             "forecast": rows,
             "annual_total_forecast_mm": round(sum(x["forecast_mm"] for x in rows), 2),
         }
@@ -202,7 +216,7 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
         return {
             "locality": locality,
             "status": "fallback_forecast",
-            "message": "SARIMA could not be fitted; showing a simple trend forecast",
+            "message": "SARIMA could not be fitted; showing a seasonal rainfall baseline from historical monthly patterns",
             "observed_months": int(len(observed)),
             "first_observation": str(observed.index.min().date()),
             "last_observation": str(observed.index.max().date()),
@@ -210,7 +224,7 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
             "training_end": training_end_str,
             "forecast_start": forecast_start_str,
             "horizon_months": horizon_months,
-            "model": {"name": "Trend fallback"},
+            "model": {"name": "Seasonal rainfall baseline"},
             "forecast": rows,
             "annual_total_forecast_mm": round(sum(x["forecast_mm"] for x in rows), 2),
         }
@@ -240,7 +254,7 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
         return {
             "locality": locality,
             "status": "fallback_forecast",
-            "message": "SARIMA forecast failed; showing a simple trend forecast",
+            "message": "SARIMA forecast failed; showing a seasonal rainfall baseline from historical monthly patterns",
             "observed_months": int(len(observed)),
             "first_observation": str(observed.index.min().date()),
             "last_observation": str(observed.index.max().date()),
@@ -248,7 +262,7 @@ def forecast_locality(locality: str, horizon_months: int = 12, data_path: Path =
             "training_end": training_end_str,
             "forecast_start": forecast_start_str,
             "horizon_months": horizon_months,
-            "model": {"name": "Trend fallback"},
+            "model": {"name": "Seasonal rainfall baseline"},
             "forecast": rows,
             "annual_total_forecast_mm": round(sum(x["forecast_mm"] for x in rows), 2),
         }
