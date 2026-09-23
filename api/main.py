@@ -291,7 +291,7 @@ def daily_forecast(locality: str):
     return {
         "locality": result["locality"],
         "updated_at": result["updated_at"],
-        "forecast_source": "Open-Meteo daily forecast",
+        "forecast_source": "WeatherAPI.com",
         "days": result.get("next_7_days", []),
     }
 
