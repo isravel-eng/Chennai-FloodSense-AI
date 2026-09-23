@@ -90,3 +90,70 @@
   .thead,.tr{min-width:680px}
   .authCard{padding:28px 22px}
 }
+
+/* ============================================================
+   Brand, authentication, About and profile refinement
+   ============================================================ */
+.topbar{height:82px;min-height:82px;padding:0 30px}
+.brand{display:flex;align-items:center;gap:11px;min-width:285px;white-space:nowrap;line-height:1}
+.headerLogo{width:50px;height:50px;object-fit:contain;display:block;flex:0 0 50px}
+.mainNav{display:flex;align-items:center;justify-content:center;gap:4px;flex:1}
+.mainNav button{white-space:nowrap}
+.userChip{min-width:95px;display:flex;align-items:center;justify-content:flex-end}
+.logoutBtn{white-space:nowrap}
+.mapPage{height:calc(100vh - 82px)}
+
+.authPage{min-height:100vh;padding:32px 20px}
+.authLayout{width:min(950px,100%);display:grid;grid-template-columns:1fr minmax(380px,460px);gap:48px;align-items:center}
+.authLayoutCompact{grid-template-columns:1fr minmax(300px,420px)}
+.authIdentity{text-align:center;padding:16px}
+.authHeroLogo{width:120px;height:120px;object-fit:contain;display:block;margin:0 auto 18px}
+.authHeroName{font-size:31px;font-weight:800;letter-spacing:-.035em}
+.authHeroName b{color:#1976d2}
+.authIdentity p{max-width:400px;margin:12px auto 0;color:#6d7e8f;line-height:1.6}
+.authCard{padding:32px 34px}
+.authBrand{display:none}
+.authCardHeading{margin-bottom:18px}
+.authCardHeading span{display:block;font-size:23px;font-weight:800;color:#102033}
+.authCardHeading small{display:block;margin-top:6px;color:#7a8fa3;line-height:1.5}
+
+.infoPage{max-width:1100px}
+.infoHero{display:flex;align-items:center;justify-content:center;gap:22px;margin-bottom:20px;text-align:left}
+.infoHeroLogo{width:88px;height:88px;object-fit:contain;flex:0 0 88px}
+.infoHero h1{margin:4px 0}
+.infoCard{background:#fff;border:1px solid #e0e7ee;border-radius:18px;padding:30px 34px;box-shadow:0 12px 35px rgba(16,32,51,.06)}
+.infoCard h2{margin:0 0 10px;font-size:18px;color:#102033}
+.infoCard h2:not(:first-child){margin-top:30px}
+.infoCard p{color:#536576;line-height:1.7;margin:8px 0}
+.infoCard .explainPanel{margin:12px 0 0}
+.riskLegend{display:grid;gap:10px;margin-top:10px}
+.riskLegend>div{display:flex;align-items:flex-start;gap:10px;color:#536576;line-height:1.5}
+.riskLegendDot{width:12px;height:12px;border-radius:50%;margin-top:5px;flex:0 0 12px;background:#8fa1b3}
+.riskLegendDot.low{background:#13864d}
+.riskLegendDot.medium{background:#d29400}
+.riskLegendDot.high{background:#c23c45}
+.riskLegendDot.veryHigh{background:#8f1d2c}
+
+.profilePage{max-width:900px}
+.profileHero{text-align:center;padding:4px 0 28px}
+.profileHeroLogo{width:165px;height:165px;object-fit:contain;display:block;margin:0 auto 16px}
+.profileHero h1{margin:0;font-size:32px;letter-spacing:-.03em}
+.profileHero p{margin:7px 0 0;color:#7a8fa3}
+.profileCard{max-width:680px;margin:0 auto;background:#fff;border:1px solid #e0e7ee;border-radius:18px;padding:8px 28px;box-shadow:0 12px 35px rgba(16,32,51,.06)}
+.profileRow{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:19px 0;border-bottom:1px solid #edf0f3}
+.profileRow:last-child{border-bottom:0}
+.profileRow span{font-size:10px;letter-spacing:.07em;font-weight:850;color:#8a99ab}
+.profileRow strong{font-size:15px;text-align:right;overflow-wrap:anywhere}
+
+@media(max-width:900px){
+  .topbar{height:auto;min-height:82px;padding:10px 12px}
+  .brand{min-width:0}
+  .headerLogo{width:44px;height:44px;flex-basis:44px}
+  .mainNav{overflow-x:auto;justify-content:flex-start;width:100%;padding-bottom:2px}
+  .authLayout,.authLayoutCompact{grid-template-columns:1fr;gap:10px}
+  .authHeroLogo{width:92px;height:92px;margin-bottom:12px}
+  .authHeroName{font-size:25px}
+  .infoHero{flex-direction:column;text-align:center}
+  .infoCard{padding:22px 18px}
+  .profileHeroLogo{width:135px;height:135px}
+}

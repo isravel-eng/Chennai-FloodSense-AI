@@ -169,39 +169,46 @@ function AuthPage({ localities }) {
 
   return (
     <div className="authPage">
-      <div className="authCard">
-        <div className="authBrand">
-          <img className="brandLogo" src={CFS_LOGO} alt="Chennai FloodSense AI logo" style={{ width: 34, height: 34, objectFit: 'contain', flexShrink: 0 }} />
-          <span>Chennai <b>FloodSense AI</b></span>
+      <div className="authLayout">
+        <div className="authIdentity">
+          <img className="authHeroLogo" src={CFS_LOGO} alt="Chennai FloodSense AI logo" />
+          <div className="authHeroName">Chennai <b>FloodSense AI</b></div>
+          <p>AI-powered locality-level flood monitoring for Chennai.</p>
         </div>
-        <p className="authTagline">Live flood monitoring for Chennai's Northeast Monsoon season</p>
 
-        {verificationPending ? (
-          <div className="verifyBox">
-            <div className="verifyIcon">✉️</div>
-            <h2>Verify your email</h2>
-            <p>
-              Account created for <b>{pendingEmail}</b>.<br />
-              Please check your inbox and click the verification link before signing in.
-            </p>
-            <button
-              className="primary fullButton"
-              onClick={() => { setVerificationPending(false); setPendingEmail(''); setTab('login'); }}
-            >
-              Go to Sign In
-            </button>
+        <div className="authCard">
+          <div className="authCardHeading">
+            <span>{verificationPending ? 'Verify your email' : tab === 'login' ? 'Welcome back' : 'Create your account'}</span>
+            <small>
+              {verificationPending
+                ? 'Finish account verification before signing in.'
+                : tab === 'login'
+                  ? 'Sign in to access your flood monitoring dashboard.'
+                  : 'Set up your profile to personalize locality monitoring.'}
+            </small>
           </div>
-        ) : (
-          <>
-            <div className="authTabs">
-              <button className={tab === 'login' ? 'active' : ''} onClick={() => setTab('login')}>Sign In</button>
-              <button className={tab === 'register' ? 'active' : ''} onClick={() => setTab('register')}>Create Account</button>
+
+          {verificationPending ? (
+            <div className="verifyBox">
+              <div className="verifyIcon">✉️</div>
+              <h2>Check your inbox</h2>
+              <p>Account created for <b>{pendingEmail}</b>.<br />Click the verification link in your email, then return here to sign in.</p>
+              <button className="primary fullButton" onClick={() => { setVerificationPending(false); setPendingEmail(''); setTab('login'); }}>
+                Go to Sign In
+              </button>
             </div>
-            {tab === 'login'
-              ? <LoginForm onLogin={login} />
-              : <RegisterForm onRegister={register} localities={localities} onVerificationRequired={handleVerificationRequired} />}
-          </>
-        )}
+          ) : (
+            <>
+              <div className="authTabs">
+                <button type="button" className={tab === 'login' ? 'active' : ''} onClick={() => setTab('login')}>Sign In</button>
+                <button type="button" className={tab === 'register' ? 'active' : ''} onClick={() => setTab('register')}>Create Account</button>
+              </div>
+              {tab === 'login'
+                ? <LoginForm onLogin={login} />
+                : <RegisterForm onRegister={register} localities={localities} onVerificationRequired={handleVerificationRequired} />}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -319,7 +326,7 @@ function ExplainPanel({ risk, locality }) {
       </ul>
       <div className="explainMeta">
         <span><b>Flood model:</b> XGBoost classifier</span>
-        <span><b>Data source:</b> Live weather (Open-Meteo) + {histSource === 'live_log' ? 'persisted rainfall history' : 'climatology fallback'} + ML model</span>
+        <span><b>Data source:</b> Live weather (WeatherAPI) + {histSource === 'live_log' ? 'persisted rainfall history' : 'historical rainfall data'} + ML model</span>
         <span className="explainNote">Risk probability ({Math.round(prob * 100)}%) is a model score, not a guaranteed real-world flood probability.</span>
       </div>
     </div>
@@ -374,7 +381,7 @@ function MapPage({ localities, selected, setSelected, risk, loading, error, onRe
             <Stat label="Last 7 days" value={formatRainfall(risk.context?.rainfall_last_7d_mm ?? 0)} />
             <Stat label="Last 30 days" value={formatRainfall(risk.context?.rainfall_last_30d_mm ?? 0)} />
           </div>
-          <ExplainPanel risk={risk} locality={selected} />
+
           <div className="chartCard compactChart">
             <div className="cardTitle">Next 7 Days · Rainfall</div>
             <ResponsiveContainer width="100%" height={200}>
@@ -489,6 +496,73 @@ function LocalitiesPage({ localities, onOpen }) {
 }
 
 // ---------------------------------------------------------------------------
+// About page
+// ---------------------------------------------------------------------------
+function AboutPage({ risk, selected }) {
+  return (
+    <main className="page infoPage">
+      <div className="infoHero">
+        <img className="infoHeroLogo" src={CFS_LOGO} alt="Chennai FloodSense AI logo" />
+        <div>
+          <div className="eyebrow">ABOUT THE APPLICATION</div>
+          <h1>Chennai FloodSense AI</h1>
+          <p className="subtitle">Locality-level rainfall monitoring, flood-risk assessment, and forecasting for Chennai.</p>
+        </div>
+      </div>
+
+      <div className="infoCard">
+        <h2>How to use the app</h2>
+        <p>Use <b>Map</b> to view Chennai localities and select a marker to inspect the current 24-hour flood-risk assessment and the next 7 days of rainfall.</p>
+        <p>Use <b>Localities</b> to compare configured locations and open any locality directly on the map.</p>
+        <p>Use <b>Rainfall Prediction</b> to select a locality and forecast horizon and generate the seasonal SARIMA rainfall forecast.</p>
+        <p>Use <b>your name</b> in the navigation bar to open your user profile.</p>
+
+        <h2>What the risk colours mean</h2>
+        <div className="riskLegend">
+          <div><span className="riskLegendDot low"></span><span><b>LOW</b> — lower model-assessed flood risk.</span></div>
+          <div><span className="riskLegendDot medium"></span><span><b>MEDIUM</b> — elevated model-assessed flood risk.</span></div>
+          <div><span className="riskLegendDot high"></span><span><b>HIGH</b> — high model-assessed flood risk.</span></div>
+          <div><span className="riskLegendDot veryHigh"></span><span><b>VERY HIGH</b> — highest model-assessed flood-risk band.</span></div>
+        </div>
+
+        <h2>Why this risk?</h2>
+        {risk ? <ExplainPanel risk={risk} locality={selected} /> : (
+          <p>Select a locality on the Map first. This explanation uses forecast rainfall, recent rainfall history, seasonal context, and the ML risk score.</p>
+        )}
+
+        <h2>Forecast and risk note</h2>
+        <p>The rainfall forecast and flood-risk score are model outputs intended to support monitoring. They are not guaranteed real-world flood probabilities or official warnings.</p>
+      </div>
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// User profile page
+// ---------------------------------------------------------------------------
+function ProfilePage({ profile, session }) {
+  const email = profile?.email || session?.user?.email || '—';
+  const name = profile?.name || session?.user?.user_metadata?.name || (email.includes('@') ? email.split('@')[0] : 'User');
+  const nativeLocality = profile?.native_locality || 'Not set';
+
+  return (
+    <main className="page profilePage">
+      <div className="profileHero">
+        <img className="profileHeroLogo" src={CFS_LOGO} alt="Chennai FloodSense AI logo" />
+        <h1>{name}</h1>
+        <p>Chennai FloodSense AI user profile</p>
+      </div>
+
+      <div className="profileCard">
+        <div className="profileRow"><span>NAME</span><strong>{name}</strong></div>
+        <div className="profileRow"><span>EMAIL</span><strong>{email}</strong></div>
+        <div className="profileRow"><span>NATIVE LOCALITY</span><strong>{nativeLocality}</strong></div>
+      </div>
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Rainfall forecast page
 // ---------------------------------------------------------------------------
 function RainfallPage({ localities, selected, setSelected }) {
@@ -576,57 +650,77 @@ function RainfallPage({ localities, selected, setSelected }) {
 // Main app shell (authenticated)
 // ---------------------------------------------------------------------------
 function AppShell({ localities }) {
-  const { profile, logout } = useAuth();
+  const { profile, session, logout } = useAuth();
   const [page, setPage] = useState('map');
   const [selected, setSelected] = useState('');
   const [risk, setRisk] = useState(null);
   const [loadingRisk, setLoadingRisk] = useState(false);
   const [riskError, setRiskError] = useState('');
 
-  // Default to user's native locality after profile loads
   useEffect(() => {
-    if (profile?.native_locality && !selected) {
-      setSelected(profile.native_locality);
-    }
-  }, [profile]);
+    if (profile?.native_locality && !selected) setSelected(profile.native_locality);
+  }, [profile, selected]);
 
   useEffect(() => {
     if (page === 'map' && selected) loadRisk(selected);
   }, [selected, page]);
 
   async function loadRisk(name) {
-    setLoadingRisk(true); setRiskError('');
-    try { setRisk(await getJson(`${API}/flood-risk/${encodeURIComponent(name)}`)); }
-    catch (err) { setRisk(null); setRiskError(err.message); }
-    finally { setLoadingRisk(false); }
+    setLoadingRisk(true);
+    setRiskError('');
+    try {
+      setRisk(await getJson(`${API}/flood-risk/${encodeURIComponent(name)}`));
+    } catch (err) {
+      setRisk(null);
+      setRiskError(err.message);
+    } finally {
+      setLoadingRisk(false);
+    }
   }
 
-  function openLocality(name) { setSelected(name); setPage('map'); }
+  function openLocality(name) {
+    setSelected(name);
+    setPage('map');
+  }
+
+  const profileLabel =
+    profile?.name ||
+    profile?.email?.split('@')[0] ||
+    session?.user?.email?.split('@')[0] ||
+    'Profile';
 
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <img className="brandLogo" src={CFS_LOGO} alt="Chennai FloodSense AI logo" style={{ width: 34, height: 34, objectFit: 'contain', flexShrink: 0 }} />
+          <img className="headerLogo" src={CFS_LOGO} alt="Chennai FloodSense AI logo" />
           <span>Chennai <b>FloodSense AI</b></span>
         </div>
-        <nav>
-          {[['map', 'Map'], ['localities', 'Localities'], ['rainfall', 'Rainfall Prediction']].map(([id, label]) => (
-            <button key={id} className={page === id ? 'active' : ''} onClick={() => setPage(id)} id={`nav-${id}`}>{label}</button>
+
+        <nav className="mainNav">
+          {[
+            ['map', 'Map'],
+            ['localities', 'Localities'],
+            ['rainfall', 'Rainfall Prediction'],
+            ['about', 'About'],
+            ['profile', profileLabel],
+          ].map(([id, label]) => (
+            <button type="button" key={id} className={page === id ? 'active' : ''} onClick={() => setPage(id)} id={`nav-${id}`}>
+              {label}
+            </button>
           ))}
         </nav>
+
         <div className="userChip">
-          {profile && <span className="userName" title={profile.email}>{profile.name || profile.email}</span>}
           <button className="logoutBtn" onClick={logout} id="logout-btn" title="Sign out">Sign out</button>
         </div>
       </header>
-      {page === 'map' && (
-        <MapPage localities={localities} selected={selected} setSelected={setSelected}
-          risk={risk} loading={loadingRisk} error={riskError}
-          onRefresh={() => selected && loadRisk(selected)} />
-      )}
+
+      {page === 'map' && <MapPage localities={localities} selected={selected} setSelected={setSelected} risk={risk} loading={loadingRisk} error={riskError} onRefresh={() => selected && loadRisk(selected)} />}
       {page === 'localities' && <LocalitiesPage localities={localities} onOpen={openLocality} />}
       {page === 'rainfall' && <RainfallPage localities={localities} selected={selected} setSelected={setSelected} />}
+      {page === 'about' && <AboutPage risk={risk} selected={selected} />}
+      {page === 'profile' && <ProfilePage profile={profile} session={session} />}
     </div>
   );
 }
@@ -648,9 +742,15 @@ export default function App() {
   if (loading) {
     return (
       <div className="authPage">
-        <div className="authCard">
-          <div className="authBrand"><img className="brandLogo" src={CFS_LOGO} alt="Chennai FloodSense AI logo" style={{ width: 34, height: 34, objectFit: 'contain', flexShrink: 0 }} /> <span>Chennai <b>FloodSense AI</b></span></div>
-          <div className="loadingBox" style={{ marginTop: 24 }}>Checking session…</div>
+        <div className="authLayout authLayoutCompact">
+          <div className="authIdentity">
+            <img className="authHeroLogo" src={CFS_LOGO} alt="Chennai FloodSense AI logo" />
+            <div className="authHeroName">Chennai <b>FloodSense AI</b></div>
+            <p>AI-powered locality-level flood monitoring for Chennai.</p>
+          </div>
+          <div className="authCard">
+            <div className="loadingBox">Checking session…</div>
+          </div>
         </div>
       </div>
     );
