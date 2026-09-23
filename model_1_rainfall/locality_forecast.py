@@ -173,8 +173,8 @@ def forecast_locality(
     horizon_months: int = 12,
     data_path: Path = DATA_PATH,
 ) -> dict:
-    if horizon_months not in (12, 24, 36):
-        raise ValueError("horizon_months must be 12, 24, or 36")
+    if horizon_months not in (6, 12, 24, 36):
+        raise ValueError("horizon_months must be 6, 12, 24, or 36")
 
     monthly = load_locality_monthly(locality, data_path)
     observed = monthly.dropna()
@@ -237,5 +237,5 @@ def forecast_locality(
             "aic": round(aic, 2),
         },
         "forecast": rows,
-        "annual_total_forecast_mm": round(sum(x["forecast_mm"] for x in rows), 2),
+        "forecast_total_mm": round(sum(x["forecast_mm"] for x in rows), 2),
     }
