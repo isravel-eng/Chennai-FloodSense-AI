@@ -533,7 +533,7 @@ function RainfallPage({ localities, selected, setSelected }) {
       </div>
       {error && <div className="errorBox">{error}</div>}
       {data?.status === 'fallback_forecast' && (
-        <div className="notice">Limited history: {data.observed_months} months. A non-seasonal rainfall forecast is being shown instead of a 24-month seasonal SARIMA model.</div>
+        <div className="notice">{data.message}</div>
       )}
       {data?.status === 'model_fit_failed' && <div className="notice">{data.message}</div>}
       {chart.length > 0 && <>
@@ -546,13 +546,11 @@ function RainfallPage({ localities, selected, setSelected }) {
               <YAxis />
               <Tooltip formatter={(value) => formatRainfall(value)} />
               <Legend />
-              <Line type="monotone" dataKey="lower_95_mm" name="Lower bound" stroke="#90a4ae" strokeDasharray="4 3" strokeWidth={1.5} dot={false} />
-              <Line type="monotone" dataKey="upper_95_mm" name="Upper bound" stroke="#90a4ae" strokeDasharray="4 3" strokeWidth={1.5} dot={false} />
               <Line type="monotone" dataKey="forecast_mm" name="Predicted rainfall" stroke="#1976d2" strokeWidth={3} dot={false} />
             </LineChart>
           </ResponsiveContainer>
           <div className="forecastNote">
-            Shaded/outer lines show the model's estimated 95% confidence interval around the predicted rainfall. The bounds are not ±95 mm.
+            Predicted rainfall is shown as the primary forecast trend. Confidence bounds are retained in the table and are not plotted.
           </div>
         </div>
         <div className="table">
