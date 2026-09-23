@@ -209,7 +209,7 @@ def get_localities():
         raise HTTPException(status_code=500, detail="Locality lookup not found on server")
     try:
         df = pd.read_csv(LOOKUP_PATH)
-        required = {"locality", "latitude", "longitude", "elevation_m_approx"}
+        required = {"locality", "display_name", "latitude", "longitude", "elevation_m_approx"}
         missing = required.difference(df.columns)
         if missing:
             raise HTTPException(
@@ -218,6 +218,7 @@ def get_localities():
         localities = [
             {
                 "name": str(row["locality"]),
+                "display_name": str(row["display_name"]),
                 "latitude": float(row["latitude"]),
                 "longitude": float(row["longitude"]),
                 "elevation_m_approx": float(row["elevation_m_approx"]),

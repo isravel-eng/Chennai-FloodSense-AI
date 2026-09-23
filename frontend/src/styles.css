@@ -253,3 +253,24 @@
   object-fit:contain;
 }
 .page,.mapPage{animation:cfsPageIn .18s ease-out}@keyframes cfsPageIn{from{opacity:.72;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}.compactChart .recharts-wrapper{overflow:visible!important}
+.chartTitleRow{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+.chartTitleRow small{
+  font-size:11px;
+  font-weight:700;
+  color:#7b8998;
+  white-space:nowrap;
+}
+.localityGrid>span:first-child b{
+  display:block;
+  line-height:1.25;
+}
+.localityGrid>span:first-child small{
+  display:block;
+  margin-top:3px;
+  line-height:1.25;
+}

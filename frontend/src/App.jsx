@@ -37,6 +37,15 @@ function formatRainfall(value) {
   return `${trimmed} mm`;
 }
 
+function displayLocality(locality) {
+  if (!locality) return 'Locality';
+  return locality.display_name || locality.name || String(locality);
+}
+
+function displayLocalityName(name, localities) {
+  return localities.find(x => x.name === name)?.display_name || name || 'Locality';
+}
+
 const CLIENT_CACHE_TTL = {
   localities: 24 * 60 * 60 * 1000,
   localityRisk: 5 * 60 * 1000,
@@ -331,7 +340,7 @@ function RegisterForm({ onRegister, localities, onVerificationRequired }) {
       <label htmlFor="reg-locality">Native Locality</label>
       <select id="reg-locality" value={locality} onChange={e => setLocality(e.target.value)} required>
         <option value="">Select your locality…</option>
-        {localities.map(x => <option key={x.name} value={x.name}>{x.name}</option>)}
+        {localities.map(x => <option key={x.name} value={x.name}>{displayLocality(x)}</option>)}
       </select>
       <label htmlFor="reg-password">Password</label>
       <input id="reg-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Min 6 characters" required autoComplete="new-password" minLength={6} />
@@ -402,7 +411,7 @@ function MapPage({ localities, selected, setSelected, risk, loading, error, onRe
         <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         {localities.map(x => (
           <Marker key={x.name} position={[x.latitude, x.longitude]} icon={markerIcon} eventHandlers={{ click: () => setSelected(x.name) }}>
-            <LeafletTooltip permanent direction="top" offset={[0, -38]} className="localityLabel">{x.name}</LeafletTooltip>
+            <LeafletTooltip permanent direction="top" offset={[0, -38]} className="localityLabel">{displayLocality(x)}</LeafletTooltip>
           </Marker>
         ))}
       </MapContainer>
@@ -416,7 +425,7 @@ function MapPage({ localities, selected, setSelected, risk, loading, error, onRe
       <div className={`riskDrawer ${panelOpen ? 'open' : ''}`}>
         <button className="drawerClose" onClick={() => setPanelOpen(false)} aria-label="Close locality details">×</button>
         <div className="panelLabel">SELECTED LOCALITY</div>
-        <h2>{selected || 'Select a locality on the map'}</h2>
+        <h2>{displayLocalityName(selected, localities) || 'Select a locality on the map'}</h2>
         {loading && <div className="loadingBox">Loading prediction…</div>}
         {!loading && error && <div className="errorBox">{error}</div>}
         {!loading && !error && risk && <>
@@ -436,12 +445,12 @@ function MapPage({ localities, selected, setSelected, risk, loading, error, onRe
           </div>
 
           <div className="chartCard compactChart">
-            <div className="cardTitle">Next 7 Days · Rainfall</div>
+            <div className="cardTitle chartTitleRow"><span>Next 7 Days · Rainfall</span><small>Rainfall (mm)</small></div>
             <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={chart7} margin={{ top: 8, right: 12, left: 42, bottom: 22 }}>
+              <BarChart data={chart7} margin={{ top: 8, right: 12, left: 66, bottom: 24 }}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="shortDate" label={{ value: 'Date', position: 'insideBottom', offset: -12 }} />
-                <YAxis width={42} label={{ value: 'Rainfall (mm)', angle: -90, position: 'insideLeft', offset: 2 }} />
+                <XAxis dataKey="shortDate" label={{ value: 'Date', position: 'insideBottom', offset: -16 }} />
+                <YAxis width={60} label={{ value: 'Rainfall (mm)', angle: -90, position: 'insideLeft', offset: 8 }} />
                 <Tooltip formatter={(value) => formatRainfall(value)} />
                 <Bar dataKey="rainfall_mm" name="Rainfall (mm)" fill="#1976d2" radius={[5, 5, 0, 0]} />
               </BarChart>
@@ -497,10 +506,14 @@ function LocalitiesPage({ localities, onOpen }) {
   }, [localities]);
 
   const rows = useMemo(() => {
-    const filtered = localities.filter(x => x.name.toLowerCase().includes(query.toLowerCase()));
+    const search = query.toLowerCase();
+    const filtered = localities.filter(x =>
+      x.name.toLowerCase().includes(search) ||
+      displayLocality(x).toLowerCase().includes(search)
+    );
     return [...filtered].sort((a, b) => {
-      const av = sort === 'name' ? a.name : sort === 'risk' ? (predictions[a.name]?.next_24h?.probability || 0) : (predictions[a.name]?.next_24h?.forecast_rainfall_mm || 0);
-      const bv = sort === 'name' ? b.name : sort === 'risk' ? (predictions[b.name]?.next_24h?.probability || 0) : (predictions[b.name]?.next_24h?.forecast_rainfall_mm || 0);
+      const av = sort === 'name' ? displayLocality(a) : sort === 'risk' ? (predictions[a.name]?.next_24h?.probability || 0) : (predictions[a.name]?.next_24h?.forecast_rainfall_mm || 0);
+      const bv = sort === 'name' ? displayLocality(b) : sort === 'risk' ? (predictions[b.name]?.next_24h?.probability || 0) : (predictions[b.name]?.next_24h?.forecast_rainfall_mm || 0);
       const cmp = typeof av === 'string' ? av.localeCompare(bv) : av - bv;
       return direction === 'asc' ? cmp : -cmp;
     });
@@ -535,7 +548,7 @@ function LocalitiesPage({ localities, onOpen }) {
           const p = predictions[x.name];
           return (
             <button className="tr localityGrid" key={x.name} onClick={() => onOpen(x.name)}>
-              <span><b>{x.name}</b><small>{x.latitude.toFixed(4)}, {x.longitude.toFixed(4)}</small></span>
+              <span><b>{displayLocality(x)}</b><small>{x.name} · {x.latitude.toFixed(4)}, {x.longitude.toFixed(4)}</small></span>
               <span className={String(p?.next_24h?.risk_band || '—').toLowerCase()}>{p?.next_24h?.risk_band || '—'}</span>
               <span>{p ? `${Math.round((p.next_24h.probability || 0) * 100)}%` : '—'}</span>
               <span>{p ? formatRainfall(p.next_24h.forecast_rainfall_mm) : '—'}</span>
@@ -680,7 +693,7 @@ function ProfilePage({ profile, session, localities }) {
               <label htmlFor="profile-locality">NATIVE LOCALITY</label>
               <select id="profile-locality" value={nativeLocality} onChange={e => setNativeLocality(e.target.value)} required>
                 <option value="">Select your locality…</option>
-                {localities.map(x => <option key={x.name} value={x.name}>{x.name}</option>)}
+                {localities.map(x => <option key={x.name} value={x.name}>{displayLocality(x)}</option>)}
               </select>
             </div>
 
@@ -732,7 +745,7 @@ function RainfallPage({ localities, selected, setSelected }) {
         <div>
           <label>LOCALITY</label>
           <select value={selected} onChange={e => setSelected(e.target.value)} id="rf-locality-select">
-            {localities.map(x => <option key={x.name} value={x.name}>{x.name}</option>)}
+            {localities.map(x => <option key={x.name} value={x.name}>{displayLocality(x)}</option>)}
           </select>
         </div>
         <div>
@@ -754,14 +767,14 @@ function RainfallPage({ localities, selected, setSelected }) {
       {data?.status === 'model_fit_failed' && <div className="notice">{data.message}</div>}
       {chart.length > 0 && <>
         <div className="chartCard">
-          <div className="cardTitle">{data?.model?.name || 'Rainfall'} Forecast · {selected} · {months} months</div>
+          <div className="cardTitle">{data?.model?.name || 'Rainfall'} Forecast · {displayLocalityName(selected, localities)} · {months} months</div>
           <ResponsiveContainer width="100%" height={380}>
-            <LineChart data={chart} margin={{ top: 10, right: 20, left: 48, bottom: 26 }}>
+            <LineChart data={chart} margin={{ top: 32, right: 20, left: 66, bottom: 36 }}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" interval={months > 18 ? 2 : 0} label={{ value: 'Month', position: 'insideBottom', offset: -12 }} />
-              <YAxis width={48} label={{ value: 'Rainfall (mm)', angle: -90, position: 'insideLeft', offset: 4 }} />
+              <XAxis dataKey="month" interval={months > 18 ? 2 : 0} label={{ value: 'Month', position: 'insideBottom', offset: -22 }} />
+              <YAxis width={60} label={{ value: 'Rainfall (mm)', angle: -90, position: 'insideLeft', offset: 8 }} />
               <Tooltip formatter={(value) => formatRainfall(value)} />
-              <Legend />
+              <Legend verticalAlign="top" height={24} />
               <Line type="monotone" dataKey="forecast_mm" name="Predicted rainfall" stroke="#1976d2" strokeWidth={3} dot={false} />
             </LineChart>
           </ResponsiveContainer>
