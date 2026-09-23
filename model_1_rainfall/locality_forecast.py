@@ -17,8 +17,9 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = ROOT / "data" / "raw" / "master_dataset.csv"
 LIVE_LOG_PATH = ROOT / "data" / "processed" / "live_rainfall_log.csv"
 
-# 36+ monthly observations gives the seasonal model several annual cycles.
-MIN_MONTHS = 36
+# 24 complete monthly observations provide two full annual seasonal cycles,
+# which is sufficient for the lightweight seasonal SARIMA used here.
+MIN_MONTHS = 24
 
 # Seasonal SARIMA candidate configurations. All have monthly seasonality (s=12).
 CANDIDATE_MODELS = [
@@ -106,17 +107,32 @@ def load_locality_monthly(locality: str, data_path: Path = DATA_PATH) -> pd.Seri
     full_index = pd.date_range(monthly.index.min(), monthly.index.max(), freq="MS")
     monthly = monthly.reindex(full_index)
 
-    # Rainfall data should contain daily observations. A missing whole month is
-    # treated as missing data, not as zero rainfall; SARIMA can handle NaNs,
-    # but too many gaps are rejected below.
-    missing_fraction = float(monthly.isna().mean())
-    if missing_fraction > 0.10:
+    # Historical records are sparse for some localities. Do not interpret those
+    # old gaps as zero rainfall and do not fill them artificially. Instead,
+    # train on the latest contiguous monthly block available before forecasting.
+    # This preserves a genuine SARIMA input series while using the recent
+    # backfilled 2024-present rainfall data.
+    available = monthly.notna()
+    if not available.any():
+        raise ValueError(f"No usable monthly rainfall history for {locality}")
+
+    end_pos = len(monthly) - 1
+    while end_pos >= 0 and pd.isna(monthly.iloc[end_pos]):
+        end_pos -= 1
+
+    start_pos = end_pos
+    while start_pos > 0 and pd.notna(monthly.iloc[start_pos - 1]):
+        start_pos -= 1
+
+    recent = monthly.iloc[start_pos:end_pos + 1].copy()
+
+    if len(recent) < MIN_MONTHS:
         raise ValueError(
-            f"Rainfall history for {locality} contains too many missing months "
-            f"({missing_fraction:.0%}); SARIMA forecast not produced."
+            f"Rainfall history for {locality} has only {len(recent)} consecutive "
+            f"complete months; SARIMA requires at least {MIN_MONTHS}."
         )
 
-    return monthly
+    return recent
 
 
 def _fit_sarima(series: pd.Series, order: tuple, seasonal_order: tuple):
