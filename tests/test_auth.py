@@ -149,6 +149,21 @@ class TestRegisterValidation:
         assert resp.status_code == 409
         assert "already exists" in resp.json()["detail"].lower()
 
+    def test_auth_upstream_502_returns_503_without_internal_url(self, app_client):
+        client, db = app_client
+        db.auth.admin.create_user.side_effect = Exception(
+            "Server error '502 Bad Gateway' for url "
+            "'https://vkecrgglwbbhlxnfyvon.supabase.co/auth/v1/admin/users'"
+        )
+
+        resp = client.post("/api/v1/auth/register", json=VALID_PAYLOAD)
+
+        assert resp.status_code == 503
+        detail = resp.json()["detail"].lower()
+        assert "temporarily unavailable" in detail
+        assert "supabase.co" not in detail
+        assert "502 bad gateway" not in detail
+
     def test_profile_insert_failure_cleans_up_auth_user(self, app_client):
         """If profile INSERT fails, the auth user must be deleted (no orphan)."""
         client, db = app_client
