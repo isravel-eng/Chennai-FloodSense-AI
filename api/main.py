@@ -388,6 +388,28 @@ def _is_duplicate_email_error(exc: Exception) -> bool:
     ))
 
 
+def _upstream_http_status(exc: Exception) -> int | None:
+    """Extract an HTTP status from an upstream client exception, if available."""
+    candidates = (
+        getattr(exc, "status_code", None),
+        getattr(getattr(exc, "response", None), "status_code", None),
+    )
+    for candidate in candidates:
+        try:
+            if candidate is not None:
+                return int(candidate)
+        except (TypeError, ValueError):
+            pass
+
+    # httpx.HTTPStatusError includes messages such as:
+    # "Server error '502 Bad Gateway' for url 'https://...'"
+    message = str(exc).lower()
+    for code in (400, 401, 403, 408, 422, 429, 500, 502, 503, 504):
+        if f"'{code} " in message or f'"{code} ' in message:
+            return code
+    return None
+
+
 @app.post("/api/v1/auth/register", status_code=201)
 def register(body: RegisterRequest):
     """Create a Supabase Auth account and a public.users profile row.
@@ -454,12 +476,33 @@ def register(body: RegisterRequest):
                 status_code=409,
                 detail="An account with this email already exists.",
             )
-        # Log full error server-side, return safe message to client.
-        logger.error("Auth user creation failed for %s: %s", email, exc)
-        raise HTTPException(
-            status_code=422,
-            detail=f"Registration failed. Please check your details and try again. Error: {str(exc)}",
+
+        # Keep upstream details in server logs only. Never expose internal URLs
+        # or infrastructure errors to the browser as validation messages.
+        upstream_status = _upstream_http_status(exc)
+        logger.error(
+            "Supabase Auth user creation failed (upstream_status=%s): %s",
+            upstream_status if upstream_status is not None else "unknown",
+            exc,
         )
+
+        if upstream_status == 429:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many registration attempts. Please wait a moment and try again.",
+            ) from exc
+        if upstream_status in (400, 422):
+            raise HTTPException(
+                status_code=422,
+                detail="Supabase rejected the registration details. Check your email and password, then try again.",
+            ) from exc
+
+        # 5xx, connection failures, and unknown upstream errors are service
+        # failures, not invalid form submissions.
+        raise HTTPException(
+            status_code=503,
+            detail="Registration service is temporarily unavailable. Please try again shortly.",
+        ) from exc
 
     if auth_user is None:
         raise HTTPException(
